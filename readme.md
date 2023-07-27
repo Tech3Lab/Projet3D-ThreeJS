@@ -14,6 +14,7 @@ npm run dev
 # Build for production in the dist/ directory
 npm run build
 ```
+Ensuite, une page devrait s'ouvrir, et vous devriez y voir un cube. Le websocket se connectera automatiquement si possible. Sinon, un pop-up apparaîtra pour vous informer que le websocket n'est pas connecté. Vous pourrez rafraîchir la page pour tenter de re-connecter le websocket.
 
 ## Resources :
 
@@ -22,4 +23,8 @@ npm run build
 [Exemples ThreeJs](https://threejs.org/examples/#webgl_animation_keyframes).
 
 [Exemple de morph](https://threejs.org/examples/?q=mor#webgl_morphtargets). Cet exemple peut être modifié en rajoutant des modifications en s'inspirant du code.
+
+## Déploiment GitPage :
+
+Pour déployer le site sur Git Page, il faut rendre le repo public. Ensuite, il faut décommenter le code qui se trouve dans le fichier main.yml. Le site devrait se lancer, et vous pourrez suivre son avancement dans les Actions sur GitHub.
 
