@@ -3,6 +3,7 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { GUI } from 'three/addons/libs/lil-gui.module.min.js';
 import { GLTFExporter } from 'three/addons/exporters/GLTFExporter.js';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+import { STLExporter } from 'three/examples/jsm/exporters/STLExporter.js'
 
 let controls, mesh, renderer, scene, camera, effectController, exporter,  mat = {};
 let radianX = 0 , radianY = 0, radianZ = 0 ;
@@ -22,7 +23,7 @@ effectController = {
     sphere : 0,
     spin: false,
     newShading: 'flat',
-    exportGLTF : exportGLTF,
+    exportSTL : exportSTL,
     tess : 5,
     shape : 'Box',
     upload : loadGLTFile,
@@ -155,7 +156,7 @@ function setupGui() {
     torsionFolder.add(effectController, 'z' ).listen().name( 'Z' );
 
     const exportFolder = gui.addFolder('Fichier')
-    exportFolder.add(effectController, 'exportGLTF' ).name( 'Télécharger ' );
+    exportFolder.add(effectController, 'exportSTL' ).name( 'Télécharger ' );
     //exportFolder.add(effectController, 'upload').name('upload');
     exportFolder.close();
 
@@ -342,33 +343,69 @@ function renderUploadedShape(){
 }
 
 
-function exportGLTF() {
-    exporter = new GLTFExporter();
-    mesh.rotation.x = 0;
-    mesh.rotation.y = 0;    
-    exporter.parse( mesh, function ( result ) {
-
-        if ( result instanceof ArrayBuffer ) {
-
-            saveArrayBuffer( result, 'scene.glb' );
-
-        } else {
-
-            const output = JSON.stringify( result, null, 2 );
-            console.log( output );
-            saveString( output, 'scene.gltf' );
-
-        }
-
-    }, 
-    function ( error ) {
-
-        console.log( 'An error happened during parsing', error );
-
-    },
-    { binary: true }
+function applyMorphTargets(geometry, influences) {
+    if (!geometry.morphAttributes.position) return; 
     
-    );
+    let modifiedGeometry = geometry.clone();
+    modifiedGeometry.morphAttributes = {}; 
+
+    const morphAttributes = geometry.morphAttributes.position;
+    for (let i = 0; i < morphAttributes.length; i++) {
+        const morphAttribute = morphAttributes[i];
+        for (let j = 0; j < morphAttribute.count; j++) {
+            const morphInfluence = influences[i] || 0;
+            const basePosition = new THREE.Vector3().fromBufferAttribute(modifiedGeometry.attributes.position, j);
+            const morphPosition = new THREE.Vector3().fromBufferAttribute(morphAttribute, j);
+            basePosition.lerp(morphPosition, morphInfluence);
+            modifiedGeometry.attributes.position.setXYZ(j, basePosition.x, basePosition.y, basePosition.z);
+        }
+    }
+    modifiedGeometry.attributes.position.needsUpdate = true;
+    return modifiedGeometry;
+}
+
+
+
+function exportSTL() {
+    exporter = new STLExporter();
+    
+
+
+    const modifiedGeometry = applyMorphTargets(mesh.geometry, mesh.morphTargetInfluences);
+    const result = exporter.parse(new THREE.Mesh(modifiedGeometry), { binary: true }); // Ensure to use binary option if needed
+    saveArrayBuffer(result, 'model.stl');
+
+
+    
+    /**
+     * Old code to export as glb.
+     */
+    // exporter = new GTLFExporter();
+    // mesh.rotation.x = 0;
+    // mesh.rotation.y = 0;    
+    // exporter.parse( mesh, function ( result ) {
+
+    //     if ( result instanceof ArrayBuffer ) {
+
+    //         saveArrayBuffer( result, 'scene.glb' );
+
+    //     } else {
+
+    //         const output = JSON.stringify( result, null, 2 );
+    //         console.log( output );
+    //         saveString( output, 'scene.gltf' );
+
+    //     }
+
+    // }, 
+    // function ( error ) {
+
+    //     console.log( 'An error happened during parsing', error );
+
+    // },
+    // { binary: true }
+    
+    // );
 
 
 }
