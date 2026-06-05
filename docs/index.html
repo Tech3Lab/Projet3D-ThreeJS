@@ -4,14 +4,46 @@
 		<meta charset="utf-8">
 		<title>My first three.js app</title>
 		<style>
-			body { margin: 0; }
+			body { margin: 0; overflow: hidden; }
+			#app {
+				display: flex;
+				height: 100vh;
+				width: 100vw;
+			}
+			.viewer-panel {
+				flex: 1 1 50%;
+				min-width: 200px;
+				position: relative;
+				overflow: hidden;
+			}
+			.viewer-canvas {
+				width: 100%;
+				height: 100%;
+			}
+			#resizer {
+				width: 6px;
+				flex-shrink: 0;
+				cursor: col-resize;
+				background: #2a2a2a;
+				transition: background 0.15s;
+			}
+			#resizer:hover,
+			#resizer.active {
+				background: #5a9fd4;
+			}
 		</style>
-		<script type="module" crossorigin src="./assets/index-ec59c0b5.js"></script>
+		<script type="module" crossorigin src="./assets/index-85e48606.js"></script>
 	</head>
 	<body>
-        <div> 
+		<div id="app">
+			<div id="panel-left" class="viewer-panel">
+				<div id="viewer-75" class="viewer-canvas"></div>
+			</div>
+			<div id="resizer"></div>
+			<div id="panel-right" class="viewer-panel">
+				<div id="viewer-76" class="viewer-canvas"></div>
+			</div>
 		</div>
-		<div id="3d"></div>
 		
 	</body>
 </html>

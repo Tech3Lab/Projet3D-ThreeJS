@@ -1,353 +1,31 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { GUI } from 'three/addons/libs/lil-gui.module.min.js';
-import { GLTFExporter } from 'three/addons/exporters/GLTFExporter.js';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
-import { STLExporter } from 'three/examples/jsm/exporters/STLExporter.js'
+import { STLExporter } from 'three/examples/jsm/exporters/STLExporter.js';
 
-let controls, mesh, renderer, scene, camera, effectController, exporter,  mat = {};
-let radianX = 0 , radianY = 0, radianZ = 0 ;
-let ambientLight;
-let dirLight1, dirLight2, dirLight3 , dirLight4 ;
-let helper1, helper2, helper3 , helper4 ;
-let shape = {};
-let morph0 , morph1;
-let loader ;
+const WS_BASE = 'wss://t3l-collector-backend.herokuapp.com/?listen=';
+// const WS_BASE = 'ws://localhost:4000/?listen=';
 
+const link = document.createElement('a');
+link.style.display = 'none';
+document.body.appendChild(link);
 
-effectController = {
-    width: 1,
-    height : 1,
-    depth : 1,
-    torsion: 0,
-    sphere : 0,
-    spin: false,
-    newShading: 'flat',
-    exportSTL : exportSTL,
-    tess : 5,
-    shape : 'Box',
-    upload : loadGLTFile,
-    x : false,
-    y : true,
-    z : false
-};
-
-let socket = new WebSocket("wss://t3l-collector-backend.herokuapp.com/?listen=75");
-//let socket = new WebSocket("ws://localhost:4000/");
-
-socket.onopen = function(e) {
-  alert("[open] Connection established");
-  console.log("Sending to server");
-  socket.send("My name is John");
-};
-
-socket.onmessage = function(event) {
-  console.log(`[message] Data received from server: ${event.data}`);
-  update(event.data);
-};
-
-socket.onclose = function(event) {
-  if (event.wasClean) {
-    alert(`[close] Connection closed cleanly, code=${event.code} reason=${event.reason}`);
-  } else {
-    // e.g. server process killed or network down
-    // event.code is usually 1006 in this case
-    alert('[close] Connection died');
-  }
-};
-
-socket.onerror = function(error) {
-  console.log((`[error]`));
-};
-
-
-init();
-animate();
-
-function init() {
-    const divisions = 10;
-    const size = 10;
-    const gridHelper = new THREE.GridHelper( size, divisions );
-    gridHelper.position.set(0,-1,0);
-    
-    creatreScene();
-
-    createCamera();
-
-    createRenderer();
-
-    createControl();
-
-    setupLights();
-
-    const geometry = new THREE.BoxGeometry( 2, 2, 2 );
-    const material = new THREE.MeshLambertMaterial( {  side: THREE.DoubleSide } );
-    mesh = new THREE.Mesh( geometry, material );
-    mesh.material.color.set( "grey" );
-    mesh.position.set(0,1,0);
-
-    scene.add( mesh );
-    //scene.add( gridHelper );
-
-    const axesHelper = new THREE.AxesHelper( 5 );
-    //scene.add( axesHelper );
-    
-    scene.add( dirLight1 );
-    //scene.add( helper1 );
-
-
-    scene.add( dirLight2 );
-    //scene.add( helper2 );
-
-    scene.add( dirLight3 );
-    //scene.add( helper3 );
-
-  
-    scene.add( dirLight4 );
-    //scene.add( helper4 );
-
-    scene.add( ambientLight );
-    window.addEventListener( 'resize', onWindowResize );
-    setupGui();
+function save(blob, filename) {
+    link.href = URL.createObjectURL(blob);
+    link.download = filename;
+    link.click();
 }
 
-function animate() {
-	requestAnimationFrame( animate );
-    if(effectController.spin){
-        radianX += 0.02;
-        radianY += 0.01;
-        radianZ += 0.01;
-        mesh.rotation.x = radianX;
-        mesh.rotation.y = radianY;
-        mesh.rotation.z = radianZ;
-    } else {
-        radianX = 0;
-        radianY = 0;
-        radianZ = 0;
-        mesh.rotation.x = 0;
-        mesh.rotation.y = 0;
-        mesh.rotation.z = 0;
-    }
-	
-    controls.update(); // only required if controls.enableDamping = true, or if controls.autoRotate = true
-
-	renderer.render( scene, camera );
+function saveArrayBuffer(buffer, filename) {
+    save(new Blob([buffer], { type: 'application/octet-stream' }), filename);
 }
-
-function setupGui() {
-
-    
-    const gui = new GUI();
-    const visuFolder = gui.addFolder("Vue");
-    visuFolder.add(effectController, 'spin' ).listen().name( 'Spining' );
-    visuFolder.add(effectController, 'shape',['Box','Sphere']).name('Shape').listen().onChange(render);
-    visuFolder.add(effectController, 'newShading', [ 'wireframe', 'flat', 'smooth','basic' ] ).name( 'Shading' ).listen().onChange(render);
-
-    const effectFolder = gui.addFolder("Effet");
-    effectFolder.add(effectController, 'sphere').min(-100).max(200).step(0.01).listen().onChange(render);
-    effectFolder.add(effectController,'torsion').min(-100).max(100).step(0.01).listen().onChange(render);
-    effectFolder.add(effectController, 'width').min( 0 ).max( 2 ).listen().onChange(render);
-    effectFolder.add(effectController, 'height').min( 0 ).max( 2 ).listen().onChange(render);
-    effectFolder.add(effectController, 'depth').min( 0 ).max( 2 ).listen().onChange(render);
-    effectFolder.add(effectController, 'tess').min(1).max(64).step(1).listen().onChange(render);
-    const torsionFolder = gui.addFolder("Sens de torsion ")
-    torsionFolder.add(effectController, 'x' ).listen().name( 'X' );
-    torsionFolder.add(effectController, 'y' ).listen().name( 'Y' );
-    torsionFolder.add(effectController, 'z' ).listen().name( 'Z' );
-
-    const exportFolder = gui.addFolder('Fichier')
-    exportFolder.add(effectController, 'exportSTL' ).name( 'Télécharger ' );
-    //exportFolder.add(effectController, 'upload').name('upload');
-    exportFolder.close();
-
-
-}
-
-
-function render() {
-    if(effectController.shape == 'Box'){
-        renderCube();
-    }else if(effectController.shape == 'Sphere'){
-        renderShpere();
-    }else if (effectController.shape == 'upload') {
-        renderUploadedShape();
-    }
-}
-
-
-function renderCube() {
-   
-    if ( mesh !== undefined ) {
-
-        mesh.geometry.dispose();
-        scene.remove( mesh );
-
-    }
-    mat['wireframe'] = new THREE.MeshStandardMaterial( { wireframe: true } );
-    mat['flat'] = new THREE.MeshPhongMaterial( { specular: 0x000000, flatShading: true, side: THREE.DoubleSide } );
-    mat['smooth'] = new THREE.MeshLambertMaterial( { side: THREE.DoubleSide } );
-    mat['basic'] = new THREE.MeshBasicMaterial();
-
-    // const geometry = new THREE.BoxGeometry( effectController.height,effectController.width, effectController.depth, effectController.tess, effectController.tess,effectController.tess );
-    shape['Box'] = new THREE.BoxGeometry( effectController.height,effectController.width, effectController.depth, effectController.tess, effectController.tess,effectController.tess );
-    shape['Sphere']= new THREE.SphereGeometry(effectController.height,effectController.tess,effectController.tess);
-    shape[effectController.shape].morphAttributes.position = [];
-
-    const positionAttribute = shape[effectController.shape].attributes.position;
-    
-	// for the first morph target we'll move the mesh's vertices onto the surface of a sphere
-	const spherePositions = [];
-	// for the second morph target, we'll twist the meshs vertices
-	const twistPositions = [];
-	const direction = new THREE.Vector3( effectController.x, effectController.y, effectController.z ); // choisir le sens de la torsion ( x y z )
-	const vertex = new THREE.Vector3();
-    
-	for ( let i = 0; i < positionAttribute.count ; i ++ ) {
-            const x = positionAttribute.getX( i );
-	        const y = positionAttribute.getY( i );
-	        const z = positionAttribute.getZ( i );
-            spherePositions.push(
-                x * Math.sqrt( 1 - ( y * y / 2 ) - ( z * z / 2 ) + ( y * y * z * z / 3 ) ),
-                y * Math.sqrt( 1 - ( z * z / 2 ) - ( x * x / 2 ) + ( z * z * x * x / 3 ) ),
-                z * Math.sqrt( 1 - ( x * x / 2 ) - ( y * y / 2 ) + ( x * x * y * y / 3 ) )
-                );
-            // stretch along the x-axis so we can see the twist better
-            vertex.set( x, y * 2 , z );
-            vertex.applyAxisAngle( direction, Math.PI * y / 2 ).toArray( twistPositions, twistPositions.length );
-   
-        }
-	    
-    
-	// add the spherical positions as the first morph target
-	shape[effectController.shape].morphAttributes.position[ 0 ] = new THREE.Float32BufferAttribute( spherePositions, 3 );
-	// add the twisted positions as the second morph target
-	shape[effectController.shape].morphAttributes.position[ 1 ] = new THREE.Float32BufferAttribute( twistPositions, 3 );
-
-    mesh = new THREE.Mesh( shape[effectController.shape], mat[effectController.newShading] );
-    mesh.morphTargetInfluences[ 0 ] = effectController.sphere;
-    mesh.morphTargetInfluences[ 1 ] = effectController.torsion;
-
-    addMeshToScene();
-
-}
-
-
-
-function renderShpere() {
-    if ( mesh !== undefined ) {
-
-        mesh.geometry.dispose();
-        scene.remove( mesh );
-
-    }
-
-    mat['wireframe'] = new THREE.MeshStandardMaterial( { wireframe: true } );
-    mat['flat'] = new THREE.MeshPhongMaterial( { specular: 0x000000, flatShading: true, side: THREE.DoubleSide } );
-    mat['smooth'] = new THREE.MeshLambertMaterial( { side: THREE.DoubleSide } );
-    mat['basic'] = new THREE.MeshBasicMaterial();
-
-    shape['Box'] = new THREE.BoxGeometry( effectController.height,effectController.width, effectController.depth, effectController.tess, effectController.tess,effectController.tess );
-    shape['Sphere']= new THREE.SphereGeometry(effectController.height,effectController.tess,effectController.tess);
-    shape[effectController.shape].morphAttributes.position = [];
-
-
-    const positionAttribute = shape[effectController.shape].attributes.position;
-    
-	// for the first morph target we'll move the mesh's vertices onto the surface of a sphere
-	const spherePositions = [];
-	// for the second morph target, we'll twist the meshs vertices
-	const twistPositions = [];
-	const direction = new THREE.Vector3( effectController.x, effectController.y, effectController.z ); // choisir le sens de la torsion ( x y z )
-	const vertex = new THREE.Vector3();
-    
-	for ( let i = 0; i < positionAttribute.count ; i ++ ) {
-            const x = positionAttribute.getX( i );
-	        const y = positionAttribute.getY( i );
-	        const z = positionAttribute.getZ( i );
-            spherePositions.push(
-                x * Math.sqrt( 1 - ( y * y / 2 ) - ( z * z / 2 ) + ( y * y * z * z / 3 ) ),
-                y * Math.sqrt( 1 - ( z * z / 2 ) - ( x * x / 2 ) + ( z * z * x * x / 3 ) ),
-                z * Math.sqrt( 1 - ( x * x / 2 ) - ( y * y / 2 ) + ( x * x * y * y / 3 ) )
-                );
-            // stretch along the x-axis so we can see the twist better
-            vertex.set( x, y * 2 , z );
-            vertex.applyAxisAngle( direction, Math.PI * y / 2 ).toArray( twistPositions, twistPositions.length );
-   
-        }
-	    
-    
-
-	// add the spherical positions as the first morph target
-	shape[effectController.shape].morphAttributes.position[ 0 ] = new THREE.Float32BufferAttribute( spherePositions, 3 );
-	// add the twisted positions as the second morph target
-	shape[effectController.shape].morphAttributes.position[ 1 ] = new THREE.Float32BufferAttribute( twistPositions, 3 );
-
-    mesh = new THREE.Mesh( shape[effectController.shape], mat[effectController.newShading] );
-    mesh.morphTargetInfluences[ 0 ] = effectController.sphere;
-    mesh.morphTargetInfluences[ 1 ] = effectController.torsion;
-    addMeshToScene();
-   
-}
-
-function renderUploadedShape(){
-    const meshCopyGeo = mesh.geometry;
-    if ( mesh !== undefined ) {
-
-        mesh.geometry.dispose();
-        scene.remove( mesh );
-
-    }
-    mat['wireframe'] = new THREE.MeshStandardMaterial( { wireframe: true } );
-    mat['flat'] = new THREE.MeshPhongMaterial( { specular: 0x000000, flatShading: true, side: THREE.DoubleSide } );
-    mat['smooth'] = new THREE.MeshLambertMaterial( { side: THREE.DoubleSide } );
-    mat['basic'] = new THREE.MeshBasicMaterial();
-    const cube = new THREE.BoxGeometry( effectController.height,effectController.width, effectController.depth, effectController.tess, effectController.tess,effectController.tess );
-    cube.morphAttributes.position = [];
-
-    const positionAttribute = cube.attributes.position;
-
-	// for the first morph target we'll move the mesh's vertices onto the surface of a sphere
-	const spherePositions = [];
-	// for the second morph target, we'll twist the meshs vertices
-	const twistPositions = [];
-	const direction = new THREE.Vector3( 0, 1, 0 ); // choisir le sens de la torsion ( x y z )
-	const vertex = new THREE.Vector3();
-
-	for ( let i = 0; i < positionAttribute.count ; i ++ ) {
-		const x = positionAttribute.getX( i );
-		const y = positionAttribute.getY( i );
-		const z = positionAttribute.getZ( i );
-		spherePositions.push(
-			x * Math.sqrt( 1 - ( y * y / 2 ) - ( z * z / 2 ) + ( y * y * z * z / 3 ) ),
-			y * Math.sqrt( 1 - ( z * z / 2 ) - ( x * x / 2 ) + ( z * z * x * x / 3 ) ),
-			z * Math.sqrt( 1 - ( x * x / 2 ) - ( y * y / 2 ) + ( x * x * y * y / 3 ) )
-            );
-		// stretch along the x-axis so we can see the twist better
-		vertex.set( x, y * 2 , z );
-		vertex.applyAxisAngle( direction, Math.PI * y / 2 ).toArray( twistPositions, twistPositions.length );
-        }
-    
-	// add the spherical positions as the first morph target
-	cube.morphAttributes.position[ 0 ] = new THREE.Float32BufferAttribute( spherePositions, 3 );
-	// add the twisted positions as the second morph target
-	cube.morphAttributes.position[ 1 ] = new THREE.Float32BufferAttribute( twistPositions, 3 );
-
-
-    mesh = new THREE.Mesh( cube, mat[effectController.newShading] );
-    
-    mesh.morphTargetInfluences[ 0 ] = effectController.sphere + morph0;
-    mesh.morphTargetInfluences[ 1 ] = effectController.torsion + morph1;
-
-    addMeshToScene();
-
-}
-
 
 function applyMorphTargets(geometry, influences) {
-    if (!geometry.morphAttributes.position) return; 
-    
-    let modifiedGeometry = geometry.clone();
-    modifiedGeometry.morphAttributes = {}; 
+    if (!geometry.morphAttributes.position) return geometry.clone();
+
+    const modifiedGeometry = geometry.clone();
+    modifiedGeometry.morphAttributes = {};
 
     const morphAttributes = geometry.morphAttributes.position;
     for (let i = 0; i < morphAttributes.length; i++) {
@@ -364,251 +42,441 @@ function applyMorphTargets(geometry, influences) {
     return modifiedGeometry;
 }
 
+class Viewer3D {
+    constructor(container, listenChannel, guiTitle, guiAlignLeft) {
+        this.container = container;
+        this.listenChannel = listenChannel;
+        this.mat = {};
+        this.shape = {};
+        this.radianX = 0;
+        this.radianY = 0;
+        this.radianZ = 0;
+        this.morph0 = 0;
+        this.morph1 = 0;
 
+        this.effectController = {
+            width: 1,
+            height: 1,
+            depth: 1,
+            torsion: 0,
+            sphere: 0,
+            spin: false,
+            newShading: 'flat',
+            exportSTL: () => this.exportSTL(),
+            tess: 5,
+            shape: 'Box',
+            upload: (url) => this.loadGLTFile(url),
+            x: false,
+            y: true,
+            z: false
+        };
 
-function exportSTL() {
-    exporter = new STLExporter();
-    
+        this.init();
+        this.setupGui(guiTitle, guiAlignLeft);
+        this.connectWebSocket();
+        this.setupDragDrop();
+        this.setupResizeObserver();
+        this.animate();
+    }
 
+    init() {
+        this.scene = new THREE.Scene();
+        this.scene.background = new THREE.Color(0x8FBCD4);
 
-    const modifiedGeometry = applyMorphTargets(mesh.geometry, mesh.morphTargetInfluences);
-    const result = exporter.parse(new THREE.Mesh(modifiedGeometry), { binary: true }); // Ensure to use binary option if needed
-    saveArrayBuffer(result, 'model.stl');
+        const width = this.container.clientWidth;
+        const height = this.container.clientHeight;
 
+        this.camera = new THREE.PerspectiveCamera(75, width / height, 0.1, 1000);
+        this.camera.position.set(0, 3, 5);
 
-    
-    /**
-     * Old code to export as glb.
-     */
-    // exporter = new GTLFExporter();
-    // mesh.rotation.x = 0;
-    // mesh.rotation.y = 0;    
-    // exporter.parse( mesh, function ( result ) {
+        this.renderer = new THREE.WebGLRenderer();
+        this.renderer.setSize(width, height);
+        this.renderer.setPixelRatio(window.devicePixelRatio);
+        this.container.appendChild(this.renderer.domElement);
 
-    //     if ( result instanceof ArrayBuffer ) {
+        this.controls = new OrbitControls(this.camera, this.renderer.domElement);
+        this.controls.listenToKeyEvents(window);
+        this.controls.enableDamping = true;
+        this.controls.dampingFactor = 0.05;
+        this.controls.screenSpacePanning = false;
+        this.controls.minDistance = 1;
+        this.controls.maxDistance = 1000;
+        this.controls.maxPolarAngle = Math.PI / 2;
 
-    //         saveArrayBuffer( result, 'scene.glb' );
+        this.setupLights();
 
-    //     } else {
+        const geometry = new THREE.BoxGeometry(2, 2, 2);
+        const material = new THREE.MeshLambertMaterial({ side: THREE.DoubleSide });
+        this.mesh = new THREE.Mesh(geometry, material);
+        this.mesh.material.color.set('grey');
+        this.mesh.position.set(0, 1, 0);
+        this.scene.add(this.mesh);
+    }
 
-    //         const output = JSON.stringify( result, null, 2 );
-    //         console.log( output );
-    //         saveString( output, 'scene.gltf' );
+    setupLights() {
+        const dirLight1 = new THREE.DirectionalLight(0xffffff);
+        dirLight1.position.set(6, 2, 6);
 
-    //     }
+        const dirLight2 = new THREE.DirectionalLight(0xffffff);
+        dirLight2.position.set(-6, 2, 6);
 
-    // }, 
-    // function ( error ) {
+        const dirLight3 = new THREE.DirectionalLight(0xffffff, 0.5);
+        dirLight3.position.set(-6, 2, -6);
 
-    //     console.log( 'An error happened during parsing', error );
+        const dirLight4 = new THREE.DirectionalLight(0xffffff, 0.5);
+        dirLight4.position.set(6, 2, -6);
 
-    // },
-    // { binary: true }
-    
-    // );
+        const ambientLight = new THREE.AmbientLight(0x4d4c4c);
 
+        this.scene.add(dirLight1, dirLight2, dirLight3, dirLight4, ambientLight);
+    }
 
-}
+    connectWebSocket() {
+        const socket = new WebSocket(`${WS_BASE}${this.listenChannel}`);
 
-function saveArrayBuffer( buffer, filename ) {
+        socket.onopen = () => {
+            alert(`[open] Connection established (canal ${this.listenChannel})`);
+            console.log(`[canal ${this.listenChannel}] Sending to server`);
+            socket.send('My name is John');
+        };
 
-    save( new Blob( [ buffer ], { type: 'application/octet-stream' } ), filename );
+        socket.onmessage = (event) => {
+            console.log(`[canal ${this.listenChannel}] Data received: ${event.data}`);
+            this.update(event.data);
+        };
 
-}
-
-
-function saveString( text, filename ) {
-
-    save( new Blob( [ text ], { type: 'text/plain' } ), filename );
-
-}
-const link = document.createElement( 'a' );
-			link.style.display = 'none';
-			document.body.appendChild( link );
-
-function save( blob, filename ) {
-
-    link.href = URL.createObjectURL( blob );
-    link.download = filename;
-    link.click();
-
-}
-
-function onWindowResize() {
-
-    camera.aspect = window.innerWidth / window.innerHeight;
-    camera.updateProjectionMatrix();
-
-    renderer.setSize( window.innerWidth, window.innerHeight );
-
-}
-
-function creatreScene(){
-    scene = new THREE.Scene();
-    scene.background = new THREE.Color( 0x8FBCD4 );
-
-}
-function createCamera() {
-    camera = new THREE.PerspectiveCamera( 75, window.innerWidth / window.innerHeight, 0.1, 1000 );
-    camera.position.set( 0, 3, 5 );
-}
-
-function createRenderer() {
-    renderer = new THREE.WebGLRenderer();
-    renderer.setSize( window.innerWidth, window.innerHeight );
-    document.getElementById("3d").appendChild(renderer.domElement);
-
-}
-
-function createControl() {
-    controls = new OrbitControls( camera, renderer.domElement );
-    controls.listenToKeyEvents( window ); 
-    //controls.addEventListener( 'change', renderer ); // call this only in static scenes (i.e., if there is no animation lo
-
-    controls.enableDamping = true; // an animation loop is required when either damping or auto-rotation are enabled
-    controls.dampingFactor = 0.05;
-    controls.screenSpacePanning = false;
-    controls.minDistance = 1;
-    controls.maxDistance = 1000;
-    controls.maxPolarAngle = Math.PI / 2;
-}
-
-function setupLights() {
-    dirLight1 = new THREE.DirectionalLight( 0xffffff );
-    dirLight1.position.set( 6, 2, 6);
-    helper1 = new THREE.DirectionalLightHelper( dirLight1, 1 );
-    
-    //scene.add( helper1 );
-
-    dirLight2 = new THREE.DirectionalLight( 0xffffff );
-    dirLight2.position.set( -6, 2, 6 );
-    helper2 = new THREE.DirectionalLightHelper( dirLight2, 1 );
-    //scene.add( helper2 );
-
-    dirLight3 = new THREE.DirectionalLight( 0xffffff, 0.5 );
-    dirLight3.position.set( -6, 2, -6 );
-    helper3 = new THREE.DirectionalLightHelper( dirLight3, 1 );
-    //scene.add( helper3 );
-
-    dirLight4 = new THREE.DirectionalLight( 0xffffff , 0.5);
-    dirLight4.position.set( 6, 2, -6 );
-    helper4 = new THREE.DirectionalLightHelper( dirLight4, 1 );
-    //scene.add( helper4 );
-
-    ambientLight = new THREE.AmbientLight( 0x4d4c4c  );
-   
-}
-
-function addMeshToScene(){
-    scene.add(mesh)
-    mesh.material.color.set( "grey" );
-    mesh.position.set(0,1,0)
-    mesh.rotation.x = radianX;
-    mesh.rotation.y = radianY;
-    mesh.rotation.z = radianZ;
-}
-
-function loadGLTFile(URL) {
-    loader = new GLTFLoader();
-    effectController.shape = 'upload';
-
-    loader.load( URL, function ( gltf ) {
-        if ( mesh !== undefined ) {
-
-            mesh.geometry.dispose();
-            scene.remove( mesh );
-    
-        }
-        mesh = gltf.scene.children[0];
-        morph0 = mesh.morphTargetInfluences[0];
-        morph1 = mesh.morphTargetInfluences[1];
-        scene.add( mesh );
-    
-    }, undefined, function ( error ) {
-    
-        console.error( error );
-    
-    } );
-}
-
-
-document.addEventListener( 'dragover', function ( event ) {
-
-    event.preventDefault();
-    event.dataTransfer.dropEffect = 'copy';
-
-} );
-
-
-document.addEventListener( 'drop', function ( event ) {
-
-    event.preventDefault();
-
-    if ( event.dataTransfer.types[ 0 ] === 'text/plain' ) return; // Outliner drop
-
-    if ( event.dataTransfer.items ) {
-        // DataTransferItemList supports folders
-        [...event.dataTransfer.items].forEach((item, i) => {
-            // If dropped items aren't files, reject them
-            if (item.kind === "file") {
-              const file = item.getAsFile();
-              console.log(file);
-              console.log(`… file[${i}].name = ${file.name}`);
-              const url = URL.createObjectURL(file);
-              loadGLTFile(url);
-              //const arrayBuffer = await file.arrayBuffer();
+        socket.onclose = (event) => {
+            if (event.wasClean) {
+                alert(`[close] Canal ${this.listenChannel} closed cleanly, code=${event.code} reason=${event.reason}`);
+            } else {
+                alert(`[close] Canal ${this.listenChannel} connection died`);
             }
-          });
-        //editor.loader.loadItemList( event.dataTransfer.items );
+        };
 
-    } else {
+        socket.onerror = () => {
+            console.log(`[error] Canal ${this.listenChannel}`);
+        };
 
-        console.log(event.dataTransfer.files);
-        //editor.loader.loadFiles( event.dataTransfer.files );
-    }
-
-} );
-
-
-function update(data) {
-    let Json = JSON.parse(data);
-   
-    
-    if(Json.newShading) {
-        effectController.newShading = Json.newShading;
-    }
-    if(Json.tess) {
-        effectController.tess = Json.tess;
-    }
-    if(Json.sphere) {
-        effectController.sphere = Json.sphere;
-    }
-    if(Json.torsion) {
-        effectController.torsion = Json.torsion;
-    }
-    if(Json.width){
-        effectController.width = Json.width;
-    }
-    if(Json.depth){
-        effectController.depth = Json.depth;
-    }
-    if(Json.height) {
-        effectController.height = Json.height;
-    }
-    if(Json.shape) {
-        effectController.shape = Json.shape;
-    }
-    if(typeof Json.x !== 'undefined'){
-        effectController.x = Json.x;
-    }
-    if(typeof Json.y !== 'undefined'){
-        effectController.y = Json.y;
-    }
-    if(typeof Json.z !== 'undefined'){
-        effectController.z = Json.z;
+        this.socket = socket;
     }
 
-    render();
-};
+    setupGui(title, alignLeft) {
+        const gui = new GUI({ title });
+        if (alignLeft) {
+            gui.domElement.style.left = '10px';
+            gui.domElement.style.right = 'auto';
+        } else {
+            gui.domElement.style.right = '10px';
+            gui.domElement.style.left = 'auto';
+        }
 
+        const visuFolder = gui.addFolder('Vue');
+        visuFolder.add(this.effectController, 'spin').listen().name('Spining');
+        visuFolder.add(this.effectController, 'shape', ['Box', 'Sphere']).name('Shape').listen().onChange(() => this.render());
+        visuFolder.add(this.effectController, 'newShading', ['wireframe', 'flat', 'smooth', 'basic']).name('Shading').listen().onChange(() => this.render());
 
+        const effectFolder = gui.addFolder('Effet');
+        effectFolder.add(this.effectController, 'sphere').min(-100).max(200).step(0.01).listen().onChange(() => this.render());
+        effectFolder.add(this.effectController, 'torsion').min(-100).max(100).step(0.01).listen().onChange(() => this.render());
+        effectFolder.add(this.effectController, 'width').min(0).max(2).listen().onChange(() => this.render());
+        effectFolder.add(this.effectController, 'height').min(0).max(2).listen().onChange(() => this.render());
+        effectFolder.add(this.effectController, 'depth').min(0).max(2).listen().onChange(() => this.render());
+        effectFolder.add(this.effectController, 'tess').min(1).max(64).step(1).listen().onChange(() => this.render());
+
+        const torsionFolder = gui.addFolder('Sens de torsion ');
+        torsionFolder.add(this.effectController, 'x').listen().name('X');
+        torsionFolder.add(this.effectController, 'y').listen().name('Y');
+        torsionFolder.add(this.effectController, 'z').listen().name('Z');
+
+        const exportFolder = gui.addFolder('Fichier');
+        exportFolder.add(this.effectController, 'exportSTL').name('Télécharger ');
+        exportFolder.close();
+
+        this.gui = gui;
+    }
+
+    setupDragDrop() {
+        this.container.addEventListener('dragover', (event) => {
+            event.preventDefault();
+            event.stopPropagation();
+            event.dataTransfer.dropEffect = 'copy';
+        });
+
+        this.container.addEventListener('drop', (event) => {
+            event.preventDefault();
+            event.stopPropagation();
+
+            if (event.dataTransfer.types[0] === 'text/plain') return;
+
+            if (event.dataTransfer.items) {
+                [...event.dataTransfer.items].forEach((item) => {
+                    if (item.kind === 'file') {
+                        const file = item.getAsFile();
+                        const url = URL.createObjectURL(file);
+                        this.loadGLTFile(url);
+                    }
+                });
+            }
+        });
+    }
+
+    setupResizeObserver() {
+        this.resizeObserver = new ResizeObserver(() => this.onResize());
+        this.resizeObserver.observe(this.container);
+    }
+
+    onResize() {
+        const width = this.container.clientWidth;
+        const height = this.container.clientHeight;
+        if (width === 0 || height === 0) return;
+
+        this.camera.aspect = width / height;
+        this.camera.updateProjectionMatrix();
+        this.renderer.setSize(width, height);
+    }
+
+    animate() {
+        requestAnimationFrame(() => this.animate());
+
+        if (this.effectController.spin) {
+            this.radianX += 0.02;
+            this.radianY += 0.01;
+            this.radianZ += 0.01;
+            this.mesh.rotation.x = this.radianX;
+            this.mesh.rotation.y = this.radianY;
+            this.mesh.rotation.z = this.radianZ;
+        } else {
+            this.radianX = 0;
+            this.radianY = 0;
+            this.radianZ = 0;
+            this.mesh.rotation.x = 0;
+            this.mesh.rotation.y = 0;
+            this.mesh.rotation.z = 0;
+        }
+
+        this.controls.update();
+        this.renderer.render(this.scene, this.camera);
+    }
+
+    render() {
+        if (this.effectController.shape === 'Box') {
+            this.renderCube();
+        } else if (this.effectController.shape === 'Sphere') {
+            this.renderSphere();
+        } else if (this.effectController.shape === 'upload') {
+            this.renderUploadedShape();
+        }
+    }
+
+    buildMorphGeometry() {
+        this.mat['wireframe'] = new THREE.MeshStandardMaterial({ wireframe: true });
+        this.mat['flat'] = new THREE.MeshPhongMaterial({ specular: 0x000000, flatShading: true, side: THREE.DoubleSide });
+        this.mat['smooth'] = new THREE.MeshLambertMaterial({ side: THREE.DoubleSide });
+        this.mat['basic'] = new THREE.MeshBasicMaterial();
+
+        this.shape['Box'] = new THREE.BoxGeometry(
+            this.effectController.height,
+            this.effectController.width,
+            this.effectController.depth,
+            this.effectController.tess,
+            this.effectController.tess,
+            this.effectController.tess
+        );
+        this.shape['Sphere'] = new THREE.SphereGeometry(
+            this.effectController.height,
+            this.effectController.tess,
+            this.effectController.tess
+        );
+        this.shape[this.effectController.shape].morphAttributes.position = [];
+
+        const positionAttribute = this.shape[this.effectController.shape].attributes.position;
+        const spherePositions = [];
+        const twistPositions = [];
+        const direction = new THREE.Vector3(this.effectController.x, this.effectController.y, this.effectController.z);
+        const vertex = new THREE.Vector3();
+
+        for (let i = 0; i < positionAttribute.count; i++) {
+            const x = positionAttribute.getX(i);
+            const y = positionAttribute.getY(i);
+            const z = positionAttribute.getZ(i);
+            spherePositions.push(
+                x * Math.sqrt(1 - (y * y / 2) - (z * z / 2) + (y * y * z * z / 3)),
+                y * Math.sqrt(1 - (z * z / 2) - (x * x / 2) + (z * z * x * x / 3)),
+                z * Math.sqrt(1 - (x * x / 2) - (y * y / 2) + (x * x * y * y / 3))
+            );
+            vertex.set(x, y * 2, z);
+            vertex.applyAxisAngle(direction, Math.PI * y / 2).toArray(twistPositions, twistPositions.length);
+        }
+
+        this.shape[this.effectController.shape].morphAttributes.position[0] = new THREE.Float32BufferAttribute(spherePositions, 3);
+        this.shape[this.effectController.shape].morphAttributes.position[1] = new THREE.Float32BufferAttribute(twistPositions, 3);
+
+        return this.shape[this.effectController.shape];
+    }
+
+    disposeMesh() {
+        if (this.mesh !== undefined) {
+            this.mesh.geometry.dispose();
+            this.scene.remove(this.mesh);
+        }
+    }
+
+    renderCube() {
+        this.disposeMesh();
+        const geometry = this.buildMorphGeometry();
+        this.mesh = new THREE.Mesh(geometry, this.mat[this.effectController.newShading]);
+        this.mesh.morphTargetInfluences[0] = this.effectController.sphere;
+        this.mesh.morphTargetInfluences[1] = this.effectController.torsion;
+        this.addMeshToScene();
+    }
+
+    renderSphere() {
+        this.disposeMesh();
+        const geometry = this.buildMorphGeometry();
+        this.mesh = new THREE.Mesh(geometry, this.mat[this.effectController.newShading]);
+        this.mesh.morphTargetInfluences[0] = this.effectController.sphere;
+        this.mesh.morphTargetInfluences[1] = this.effectController.torsion;
+        this.addMeshToScene();
+    }
+
+    renderUploadedShape() {
+        this.disposeMesh();
+        const cube = new THREE.BoxGeometry(
+            this.effectController.height,
+            this.effectController.width,
+            this.effectController.depth,
+            this.effectController.tess,
+            this.effectController.tess,
+            this.effectController.tess
+        );
+        cube.morphAttributes.position = [];
+
+        const positionAttribute = cube.attributes.position;
+        const spherePositions = [];
+        const twistPositions = [];
+        const direction = new THREE.Vector3(0, 1, 0);
+        const vertex = new THREE.Vector3();
+
+        for (let i = 0; i < positionAttribute.count; i++) {
+            const x = positionAttribute.getX(i);
+            const y = positionAttribute.getY(i);
+            const z = positionAttribute.getZ(i);
+            spherePositions.push(
+                x * Math.sqrt(1 - (y * y / 2) - (z * z / 2) + (y * y * z * z / 3)),
+                y * Math.sqrt(1 - (z * z / 2) - (x * x / 2) + (z * z * x * x / 3)),
+                z * Math.sqrt(1 - (x * x / 2) - (y * y / 2) + (x * x * y * y / 3))
+            );
+            vertex.set(x, y * 2, z);
+            vertex.applyAxisAngle(direction, Math.PI * y / 2).toArray(twistPositions, twistPositions.length);
+        }
+
+        cube.morphAttributes.position[0] = new THREE.Float32BufferAttribute(spherePositions, 3);
+        cube.morphAttributes.position[1] = new THREE.Float32BufferAttribute(twistPositions, 3);
+
+        this.mat['wireframe'] = new THREE.MeshStandardMaterial({ wireframe: true });
+        this.mat['flat'] = new THREE.MeshPhongMaterial({ specular: 0x000000, flatShading: true, side: THREE.DoubleSide });
+        this.mat['smooth'] = new THREE.MeshLambertMaterial({ side: THREE.DoubleSide });
+        this.mat['basic'] = new THREE.MeshBasicMaterial();
+
+        this.mesh = new THREE.Mesh(cube, this.mat[this.effectController.newShading]);
+        this.mesh.morphTargetInfluences[0] = this.effectController.sphere + this.morph0;
+        this.mesh.morphTargetInfluences[1] = this.effectController.torsion + this.morph1;
+        this.addMeshToScene();
+    }
+
+    addMeshToScene() {
+        this.scene.add(this.mesh);
+        this.mesh.material.color.set('grey');
+        this.mesh.position.set(0, 1, 0);
+        this.mesh.rotation.x = this.radianX;
+        this.mesh.rotation.y = this.radianY;
+        this.mesh.rotation.z = this.radianZ;
+    }
+
+    exportSTL() {
+        const exporter = new STLExporter();
+        const modifiedGeometry = applyMorphTargets(this.mesh.geometry, this.mesh.morphTargetInfluences);
+        const result = exporter.parse(new THREE.Mesh(modifiedGeometry), { binary: true });
+        saveArrayBuffer(result, `model-canal-${this.listenChannel}.stl`);
+    }
+
+    loadGLTFile(URL) {
+        const loader = new GLTFLoader();
+        this.effectController.shape = 'upload';
+
+        loader.load(URL, (gltf) => {
+            this.disposeMesh();
+            this.mesh = gltf.scene.children[0];
+            this.morph0 = this.mesh.morphTargetInfluences[0];
+            this.morph1 = this.mesh.morphTargetInfluences[1];
+            this.scene.add(this.mesh);
+        }, undefined, (error) => {
+            console.error(error);
+        });
+    }
+
+    update(data) {
+        const json = JSON.parse(data);
+
+        if (json.newShading) this.effectController.newShading = json.newShading;
+        if (json.tess) this.effectController.tess = json.tess;
+        if (json.sphere) this.effectController.sphere = json.sphere;
+        if (json.torsion) this.effectController.torsion = json.torsion;
+        if (json.width) this.effectController.width = json.width;
+        if (json.depth) this.effectController.depth = json.depth;
+        if (json.height) this.effectController.height = json.height;
+        if (json.shape) this.effectController.shape = json.shape;
+        if (typeof json.x !== 'undefined') this.effectController.x = json.x;
+        if (typeof json.y !== 'undefined') this.effectController.y = json.y;
+        if (typeof json.z !== 'undefined') this.effectController.z = json.z;
+
+        this.render();
+    }
+}
+
+const viewers = [
+    new Viewer3D(document.getElementById('viewer-75'), '75', 'Canal 75', true),
+    new Viewer3D(document.getElementById('viewer-76'), '76', 'Canal 76', false)
+];
+
+function setupResizer(panelLeft, panelRight, resizer) {
+    let isResizing = false;
+
+    resizer.addEventListener('mousedown', (e) => {
+        isResizing = true;
+        resizer.classList.add('active');
+        document.body.style.cursor = 'col-resize';
+        document.body.style.userSelect = 'none';
+        e.preventDefault();
+    });
+
+    document.addEventListener('mousemove', (e) => {
+        if (!isResizing) return;
+
+        const app = panelLeft.parentElement;
+        const appRect = app.getBoundingClientRect();
+        const resizerWidth = resizer.offsetWidth;
+        const availableWidth = appRect.width - resizerWidth;
+        const offsetX = e.clientX - appRect.left;
+        const percentage = (offsetX / availableWidth) * 100;
+        const clamped = Math.min(Math.max(percentage, 15), 85);
+
+        panelLeft.style.flex = `0 0 ${clamped}%`;
+        panelRight.style.flex = '1 1 auto';
+    });
+
+    document.addEventListener('mouseup', () => {
+        if (!isResizing) return;
+        isResizing = false;
+        resizer.classList.remove('active');
+        document.body.style.cursor = '';
+        document.body.style.userSelect = '';
+        viewers.forEach((v) => v.onResize());
+    });
+}
+
+setupResizer(
+    document.getElementById('panel-left'),
+    document.getElementById('panel-right'),
+    document.getElementById('resizer')
+);
