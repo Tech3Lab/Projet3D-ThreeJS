@@ -12,9 +12,14 @@
 			}
 			.viewer-panel {
 				flex: 1 1 50%;
-				min-width: 200px;
+				min-width: 0;
 				position: relative;
 				overflow: hidden;
+			}
+			.viewer-panel.collapsed {
+				flex: 0 0 0 !important;
+				overflow: hidden;
+				pointer-events: none;
 			}
 			.viewer-canvas {
 				width: 100%;

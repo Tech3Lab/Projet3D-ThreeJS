@@ -6,6 +6,7 @@ import { STLExporter } from 'three/examples/jsm/exporters/STLExporter.js';
 
 const WS_BASE = 'wss://t3l-collector-backend.herokuapp.com/?listen=';
 // const WS_BASE = 'ws://localhost:4000/?listen=';
+const WS_CONNECT_TIMEOUT_MS = 10000;
 
 const link = document.createElement('a');
 link.style.display = 'none';
@@ -132,29 +133,53 @@ class Viewer3D {
     }
 
     connectWebSocket() {
-        const socket = new WebSocket(`${WS_BASE}${this.listenChannel}`);
+        const channel = this.listenChannel;
+        let herokuConnected = false;
+        let connectAlertShown = false;
+
+        const showHerokuConnectError = (detail) => {
+            if (connectAlertShown) return;
+            connectAlertShown = true;
+            alert(`[error] Impossible de rejoindre Heroku (canal ${channel})${detail ? ` — ${detail}` : ''}`);
+        };
+
+        const socket = new WebSocket(`${WS_BASE}${channel}`);
+
+        const connectionTimeout = setTimeout(() => {
+            if (!herokuConnected && socket.readyState !== WebSocket.OPEN) {
+                showHerokuConnectError('délai dépassé');
+                if (socket.readyState === WebSocket.CONNECTING) {
+                    socket.close();
+                }
+            }
+        }, WS_CONNECT_TIMEOUT_MS);
 
         socket.onopen = () => {
-            alert(`[open] Connection established (canal ${this.listenChannel})`);
-            console.log(`[canal ${this.listenChannel}] Sending to server`);
+            herokuConnected = true;
+            clearTimeout(connectionTimeout);
+            console.log(`[canal ${channel}] Connecté à Heroku, en attente du device`);
             socket.send('My name is John');
         };
 
         socket.onmessage = (event) => {
-            console.log(`[canal ${this.listenChannel}] Data received: ${event.data}`);
+            console.log(`[canal ${channel}] Data received: ${event.data}`);
             this.update(event.data);
         };
 
         socket.onclose = (event) => {
-            if (event.wasClean) {
-                alert(`[close] Canal ${this.listenChannel} closed cleanly, code=${event.code} reason=${event.reason}`);
+            clearTimeout(connectionTimeout);
+            if (!herokuConnected) {
+                const detail = event.wasClean
+                    ? `code=${event.code} reason=${event.reason}`
+                    : 'connexion refusée ou interrompue';
+                showHerokuConnectError(detail);
             } else {
-                alert(`[close] Canal ${this.listenChannel} connection died`);
+                console.log(`[canal ${channel}] Déconnecté de Heroku (code=${event.code})`);
             }
         };
 
         socket.onerror = () => {
-            console.log(`[error] Canal ${this.listenChannel}`);
+            console.log(`[error] Canal ${channel} — échec connexion Heroku`);
         };
 
         this.socket = socket;
@@ -432,12 +457,30 @@ class Viewer3D {
 
         this.render();
     }
+
+    setPanelVisible(visible) {
+        if (this.gui) {
+            this.gui.domElement.style.display = visible ? '' : 'none';
+        }
+    }
 }
 
 const viewers = [
     new Viewer3D(document.getElementById('viewer-75'), '75', 'Canal 75', true),
     new Viewer3D(document.getElementById('viewer-76'), '76', 'Canal 76', false)
 ];
+
+function applyPanelLayout(panelLeft, panelRight, leftWidth, availableWidth) {
+    const leftCollapsed = leftWidth <= 0;
+    const rightCollapsed = leftWidth >= availableWidth;
+
+    panelLeft.style.flex = `0 0 ${leftWidth}px`;
+    panelRight.style.flex = '1 1 auto';
+    panelLeft.classList.toggle('collapsed', leftCollapsed);
+    panelRight.classList.toggle('collapsed', rightCollapsed);
+    viewers[0].setPanelVisible(!leftCollapsed);
+    viewers[1].setPanelVisible(!rightCollapsed);
+}
 
 function setupResizer(panelLeft, panelRight, resizer) {
     let isResizing = false;
@@ -450,19 +493,22 @@ function setupResizer(panelLeft, panelRight, resizer) {
         e.preventDefault();
     });
 
+    resizer.addEventListener('dblclick', () => {
+        const app = panelLeft.parentElement;
+        const availableWidth = app.getBoundingClientRect().width - resizer.offsetWidth;
+        applyPanelLayout(panelLeft, panelRight, availableWidth / 2, availableWidth);
+        viewers.forEach((v) => v.onResize());
+    });
+
     document.addEventListener('mousemove', (e) => {
         if (!isResizing) return;
 
         const app = panelLeft.parentElement;
         const appRect = app.getBoundingClientRect();
-        const resizerWidth = resizer.offsetWidth;
-        const availableWidth = appRect.width - resizerWidth;
-        const offsetX = e.clientX - appRect.left;
-        const percentage = (offsetX / availableWidth) * 100;
-        const clamped = Math.min(Math.max(percentage, 15), 85);
+        const availableWidth = appRect.width - resizer.offsetWidth;
+        const leftWidth = Math.max(0, Math.min(e.clientX - appRect.left, availableWidth));
 
-        panelLeft.style.flex = `0 0 ${clamped}%`;
-        panelRight.style.flex = '1 1 auto';
+        applyPanelLayout(panelLeft, panelRight, leftWidth, availableWidth);
     });
 
     document.addEventListener('mouseup', () => {
