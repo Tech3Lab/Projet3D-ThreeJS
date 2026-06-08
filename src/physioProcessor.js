@@ -22,7 +22,7 @@ export const HR_BASELINE_CHUNK_SEC = 5;
 // Couplage signal → param morph (null = valeur par défaut)
 export const PHYSIO_COUPLINGS = {
     sphere: 'eda',
-    torsion: null,
+    torsion: 'rsp',
     width: null,
     height: null,
     depth: null,
@@ -305,13 +305,16 @@ export class PhysioProcessor {
         if (bucket.length === 0) return;
 
         const edaIdx = this.signalNames.indexOf('eda');
+        const rspIdx = this.signalNames.indexOf('rsp');
         const means = this.computeEnrichedMeans(bucket);
         const edaMean = edaIdx >= 0 ? means[edaIdx] : null;
+        const rspMean = rspIdx >= 0 ? means[rspIdx] : null;
 
         const metrics = {
             hrSmooth: this.lastHrBpm,
             hrInstant: this.lastInstantBpm,
             edaMean,
+            rspMean,
             morph: null,
             inBaseline: this.inBaseline
         };
@@ -322,7 +325,8 @@ export class PhysioProcessor {
             const instantLabel = this.lastInstantBpm !== null ? this.lastInstantBpm.toFixed(0) : '—';
             console.log(
                 `[canal ${this.channel}] HR live: ${this.lastHrBpm.toFixed(0)} BPM (instant ${instantLabel})` +
-                ` | EDA μ=${edaMean !== null ? edaMean.toFixed(0) : '—'} | calibration…`
+                ` | EDA μ=${edaMean !== null ? edaMean.toFixed(0) : '—'}` +
+                ` | RSP μ=${rspMean !== null ? rspMean.toFixed(0) : '—'} | calibration…`
             );
         }
     }
@@ -397,13 +401,16 @@ export class PhysioProcessor {
 
         const morph = buildMorphParams(scaled, this.signalNames);
         const edaIdx = this.signalNames.indexOf('eda');
+        const rspIdx = this.signalNames.indexOf('rsp');
         const edaMean = edaIdx >= 0 ? means[edaIdx] : null;
+        const rspMean = rspIdx >= 0 ? means[rspIdx] : null;
 
         this.lastMetricsEmit = Date.now();
         this.onLiveMetrics?.({
             hrSmooth: this.lastHrBpm,
             hrInstant: this.lastInstantBpm,
             edaMean,
+            rspMean,
             morph,
             inBaseline: false
         });
@@ -412,7 +419,8 @@ export class PhysioProcessor {
         console.log(
             `[canal ${this.channel}] HR live: ${this.lastHrBpm.toFixed(0)} BPM (instant ${instantLabel})` +
             ` | EDA μ=${edaMean !== null ? edaMean.toFixed(0) : '—'}` +
-            ` | sphere=${morph.sphere.toFixed(1)} tess=${morph.tess.toFixed(1)}`
+            ` | RSP μ=${rspMean !== null ? rspMean.toFixed(0) : '—'}` +
+            ` | sphere=${morph.sphere.toFixed(1)} tess=${morph.tess.toFixed(1)} torsion=${morph.torsion.toFixed(1)}`
         );
 
         return morph;
