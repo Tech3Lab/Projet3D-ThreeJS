@@ -215,15 +215,16 @@ class Viewer3D {
     updateLiveMetrics({ hrSmooth, hrInstant, edaMean, rspMean, morph, inBaseline }) {
         if (!this.liveMetrics) return;
 
-        const instant = hrInstant !== null ? ` (${hrInstant.toFixed(0)} instant)` : '';
+        const hr = hrSmooth !== null
+            ? `${hrSmooth.toFixed(0)} BPM${hrInstant !== null ? ` (${hrInstant.toFixed(0)} instant)` : ''}`
+            : '—';
         const eda = edaMean !== null ? edaMean.toFixed(0) : '—';
         const rsp = rspMean !== null ? rspMean.toFixed(0) : '—';
         const morphPart = inBaseline
             ? 'calibration 20 s'
             : `sphere ${morph.sphere.toFixed(1)} · tess ${morph.tess.toFixed(1)} · torsion ${morph.torsion.toFixed(1)}`;
 
-        this.liveMetrics.textContent =
-            `HR ${hrSmooth.toFixed(0)} BPM${instant} · EDA ${eda} · RSP ${rsp} · ${morphPart}`;
+        this.liveMetrics.textContent = `HR ${hr} · EDA ${eda} · RSP ${rsp} · ${morphPart}`;
     }
 
     isPhysioMessage(json) {
