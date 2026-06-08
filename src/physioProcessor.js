@@ -9,16 +9,14 @@ export const PHYSIO_Z_CLIP_MIN = -2;
 export const PHYSIO_Z_CLIP_MAX = 2;
 export const PHYSIO_MORPH_INTERVAL_MS = 1000;
 export const PHYSIO_STALE_MS = 2000;
-export const PHYSIO_FROZEN_MS = 3000;
-export const PHYSIO_FROZEN_EPSILON = 1;
-// Capteur débranché : flux à 0 — on purge l'historique non nul du buffer
-export const PHYSIO_ZERO_CLEARS_BUFFER = true;
+// Capteur débranché : le flux envoie 0
+export const PHYSIO_ZERO_MEANS_DISCONNECTED = true;
 
 const NEUTRAL_SCALED = 512;
 
 // Dérivation ECG → HR (démo visuelle, pas analyse scientifique)
 export const USE_SIMPLE_HR = true;
-export const HR_MIN_PEAK_DISTANCE_SEC = 0.35;
+export const HR_MIN_PEAK_DISTANCE_SEC = 0.35;e
 export const HR_BPM_MIN = 40;
 export const HR_BPM_MAX = 180;
 export const HR_EMA_ALPHA = 0.3;
@@ -70,15 +68,15 @@ function rowReceivedAt(row) {
     return row[row.length - 1];
 }
 
-function columnMeans(rows, maxAgeMs = PHYSIO_WINDOW_MS) {
+function columnMeans(rows, maxAgeMs = Infinity) {
     if (rows.length === 0) return [];
     const cols = rowValueCols(rows[0]);
     const sums = new Array(cols).fill(0);
     const counts = new Array(cols).fill(0);
-    const cutoff = Date.now() - maxAgeMs;
+    const cutoff = maxAgeMs === Infinity ? 0 : Date.now() - maxAgeMs;
 
     for (const row of rows) {
-        if (rowReceivedAt(row) < cutoff) continue;
+        if (maxAgeMs !== Infinity && rowReceivedAt(row) < cutoff) continue;
 
         for (let i = 0; i < cols; i++) {
             const value = row[i];
@@ -91,15 +89,15 @@ function columnMeans(rows, maxAgeMs = PHYSIO_WINDOW_MS) {
     return sums.map((sum, i) => (counts[i] > 0 ? sum / counts[i] : null));
 }
 
-function columnStds(rows, means, maxAgeMs = PHYSIO_WINDOW_MS) {
+function columnStds(rows, means, maxAgeMs = Infinity) {
     if (rows.length === 0) return [];
     const cols = rowValueCols(rows[0]);
     const vars = new Array(cols).fill(0);
     const counts = new Array(cols).fill(0);
-    const cutoff = Date.now() - maxAgeMs;
+    const cutoff = maxAgeMs === Infinity ? 0 : Date.now() - maxAgeMs;
 
     for (const row of rows) {
-        if (rowReceivedAt(row) < cutoff) continue;
+        if (maxAgeMs !== Infinity && rowReceivedAt(row) < cutoff) continue;
 
         for (let i = 0; i < cols; i++) {
             const value = row[i];
@@ -116,8 +114,6 @@ function columnStds(rows, means, maxAgeMs = PHYSIO_WINDOW_MS) {
 function maxBucketPoints(windowMs, samplingRate) {
     return Math.ceil(windowMs / (1000 / samplingRate));
 }
-
-/** Fenêtre glissante bornée : ~PHYSIO_WINDOW_MS @ PHYSIO_SAMPLING_RATE (ex. 500 pts pour 5 s). */
 
 function arrayMean(values) {
     if (values.length === 0) return 0;
@@ -190,7 +186,6 @@ function buildMorphParams(scaledMeans, signalNames, isSignalStale = null) {
     return result;
 }
 
-// Signaux calculés localement — absents des paquets WebSocket
 const DERIVED_SIGNALS = new Set(['hr']);
 
 // ── Processeur ───────────────────────────────────────────────────────────
@@ -202,7 +197,7 @@ export class PhysioProcessor {
         this.onBaselineChange = onBaselineChange;
         this.onLiveMetrics = onLiveMetrics;
         this.signalNames = ['duration'];
-        this.bucket = [];
+        this.signalBuffers = {};
         this.baselineBucket = [];
         this.baselineMeans = null;
         this.baselineStds = null;
@@ -215,90 +210,138 @@ export class PhysioProcessor {
         this.lastHrBpm = HR_FALLBACK_BPM;
         this.lastInstantBpm = null;
         this.lastSignalAt = {};
-        this.lastSignalValue = {};
-        this.lastSignalChangeAt = {};
+        this.latestPacketMean = {};
         this.liveTick = setInterval(() => this.pruneAndEmitLive(), PHYSIO_MORPH_INTERVAL_MS);
     }
 
-    isSignalStale(name) {
-        if (name === 'hr') return this.isSignalStale('ecg');
-        const seenAt = this.lastSignalAt[name];
-        if (!seenAt) return true;
-        if (Date.now() - seenAt > PHYSIO_STALE_MS) return true;
+    rawSignalNames() {
+        return this.signalNames.filter((name) => name !== 'duration' && !DERIVED_SIGNALS.has(name));
+    }
 
-        const changedAt = this.lastSignalChangeAt[name];
-        if (changedAt !== undefined && Date.now() - changedAt > PHYSIO_FROZEN_MS) {
-            return true;
-        }
+    toSignalNumber(value) {
+        const num = Number(value);
+        return Number.isFinite(num) ? num : null;
+    }
 
-        if (PHYSIO_ZERO_CLEARS_BUFFER && this.lastSignalValue[name] === 0) {
-            return true;
-        }
+    isDisconnectedValue(value) {
+        return PHYSIO_ZERO_MEANS_DISCONNECTED && this.toSignalNumber(value) === 0;
+    }
 
+    isSignalDisconnected(name) {
+        if (name === 'hr') return this.isSignalDisconnected('ecg');
+        if (!(name in this.lastSignalAt)) return true;
+        if (Date.now() - this.lastSignalAt[name] > PHYSIO_STALE_MS) return true;
+        if (name in this.latestPacketMean && this.latestPacketMean[name] === null) return true;
         return false;
     }
 
-    trackSignalActivity(name, samples, receivedAt) {
-        if (!samples || samples.length === 0) return;
-
-        const values = samples.map((sample) => sample[1]);
-        const min = Math.min(...values);
-        const max = Math.max(...values);
-        const latest = values[values.length - 1];
-        const prev = this.lastSignalValue[name];
-
-        if (max - min > PHYSIO_FROZEN_EPSILON) {
-            this.lastSignalChangeAt[name] = receivedAt;
-        } else if (prev === undefined || Math.abs(latest - prev) > PHYSIO_FROZEN_EPSILON) {
-            this.lastSignalChangeAt[name] = receivedAt;
-        } else if (this.lastSignalChangeAt[name] === undefined) {
-            this.lastSignalChangeAt[name] = receivedAt;
-        }
-
-        this.lastSignalValue[name] = latest;
-        this.lastSignalAt[name] = receivedAt;
+    clearSignalBuffer(name) {
+        this.signalBuffers[name] = [];
+        this.latestPacketMean[name] = null;
+        delete this.lastSignalAt[name];
     }
 
-    purgeSignalColumn(name, bucket = this.bucket) {
-        const idx = this.signalNames.indexOf(name);
-        if (idx < 0) return;
+    appendSignalSamples(name, samples, receivedAt) {
+        if (!this.signalBuffers[name]) this.signalBuffers[name] = [];
 
-        for (const row of bucket) {
-            row[idx] = null;
+        for (const sample of samples) {
+            const value = this.toSignalNumber(sample[1]);
+            if (value === null) continue;
+            if (this.isDisconnectedValue(value)) continue;
+            this.signalBuffers[name].push({ v: value, t: receivedAt });
+        }
+
+        this.trimSignalBuffer(name);
+    }
+
+    trimSignalBuffer(name) {
+        const buffer = this.signalBuffers[name];
+        if (!buffer || buffer.length === 0) return;
+
+        const cutoff = Date.now() - PHYSIO_WINDOW_MS;
+        const trimmed = buffer.filter((sample) => sample.t >= cutoff);
+        const maxPts = maxBucketPoints(PHYSIO_WINDOW_MS, PHYSIO_SAMPLING_RATE);
+
+        this.signalBuffers[name] = trimmed.length > maxPts
+            ? trimmed.slice(trimmed.length - maxPts)
+            : trimmed;
+    }
+
+    trimAllSignalBuffers() {
+        for (const name of this.rawSignalNames()) {
+            this.trimSignalBuffer(name);
         }
     }
 
-    purgeStaleSignalsFromBucket() {
-        for (let i = 1; i < this.signalNames.length; i++) {
-            const name = this.signalNames[i];
-            if (DERIVED_SIGNALS.has(name) || name === 'duration') continue;
-            if (!this.isSignalStale(name)) continue;
-            this.purgeSignalColumn(name);
-        }
+    signalBufferValues(name) {
+        const buffer = this.signalBuffers[name];
+        if (!buffer || buffer.length === 0) return [];
+        const cutoff = Date.now() - PHYSIO_WINDOW_MS;
+        return buffer.filter((sample) => sample.t >= cutoff).map((sample) => sample.v);
     }
 
-    syncSignalsWithPacket(signals, receivedAt) {
-        for (let j = 1; j < this.signalNames.length; j++) {
-            const key = this.signalNames[j];
-            if (DERIVED_SIGNALS.has(key) || key === 'duration') continue;
+    getLiveSignalMean(name) {
+        if (this.isSignalDisconnected(name)) return null;
+        if (name in this.latestPacketMean && this.latestPacketMean[name] !== undefined) {
+            return this.latestPacketMean[name];
+        }
+        const values = this.signalBufferValues(name);
+        return values.length > 0 ? arrayMean(values) : null;
+    }
 
-            if (!(key in signals)) {
-                this.purgeSignalColumn(this.inBaseline ? this.baselineBucket : this.bucket);
-                delete this.lastSignalAt[key];
-                delete this.lastSignalValue[key];
-                delete this.lastSignalChangeAt[key];
+    handlePacketSignals(signals, receivedAt) {
+        for (const name of this.rawSignalNames()) {
+            if (!(name in signals)) {
+                this.clearSignalBuffer(name);
                 continue;
             }
 
-            const values = signals[key].map((sample) => sample[1]);
-            const allZero = PHYSIO_ZERO_CLEARS_BUFFER && values.every((value) => value === 0);
+            const values = signals[name]
+                .map((sample) => this.toSignalNumber(sample[1]))
+                .filter((value) => value !== null);
+            const disconnected = values.length === 0
+                || (PHYSIO_ZERO_MEANS_DISCONNECTED && values.every((value) => value === 0));
 
-            if (allZero) {
-                this.purgeSignalColumn(this.inBaseline ? this.baselineBucket : this.bucket);
+            if (disconnected) {
+                this.clearSignalBuffer(name);
+                if (name === 'eda' || name === 'rsp') {
+                    console.log(
+                        `[canal ${this.channel}] ${name.toUpperCase()} déconnecté` +
+                        ` (paquet: [${values.slice(0, 5).join(', ')}${values.length > 5 ? ', …' : ''}])`
+                    );
+                }
+                continue;
             }
 
-            this.trackSignalActivity(key, signals[key], receivedAt);
+            this.latestPacketMean[name] = arrayMean(values);
+            this.lastSignalAt[name] = receivedAt;
+
+            if (!this.inBaseline) {
+                this.appendSignalSamples(name, signals[name], receivedAt);
+            }
         }
+    }
+
+    buildBaselineRow(signals, sampleIndex, receivedAt) {
+        const anchor = this.signalNames[1];
+        const row = [signals[anchor][sampleIndex][0]];
+
+        for (let j = 1; j < this.signalNames.length; j++) {
+            const key = this.signalNames[j];
+            if (DERIVED_SIGNALS.has(key)) continue;
+
+            const raw = signals[key]?.[sampleIndex]?.[1];
+            if (raw === undefined) {
+                row.push(null);
+            } else if (this.isDisconnectedValue(raw)) {
+                row.push(null);
+            } else {
+                row.push(this.toSignalNumber(raw));
+            }
+        }
+
+        row.push(receivedAt);
+        return row;
     }
 
     pruneAndEmitLive() {
@@ -308,9 +351,7 @@ export class PhysioProcessor {
         }
         if (!this.baselineReady) return;
 
-        this.trimBucket();
-        this.purgeStaleSignalsFromBucket();
-        this.maybeEmitLiveMetrics(true);
+        this.trimAllSignalBuffers();
 
         const morph = this.computeMorphParams();
         if (morph) {
@@ -358,38 +399,50 @@ export class PhysioProcessor {
         return Math.max(arrayStd(bpms), HR_BASELINE_STD_MIN);
     }
 
-    computeEnrichedMeans(rows) {
-        const means = columnMeans(rows);
-        while (means.length < this.signalNames.length) {
-            means.push(null);
-        }
-
-        if (!USE_SIMPLE_HR) return means;
+    updateHeartRate() {
+        if (!USE_SIMPLE_HR) return;
 
         const ecgIdx = this.signalNames.indexOf('ecg');
-        if (ecgIdx < 0) return means;
+        if (ecgIdx < 0) return;
 
         this.ensureHrSignal();
-        const hrIdx = this.signalNames.indexOf('hr');
-        if (this.isSignalStale('ecg')) {
+
+        if (this.isSignalDisconnected('ecg')) {
             this.lastInstantBpm = null;
-            means[hrIdx] = null;
-            return means;
+            return;
         }
 
-        const cutoff = Date.now() - PHYSIO_WINDOW_MS;
-        const ecgSamples = rows
-            .filter((row) => rowReceivedAt(row) >= cutoff)
-            .map((row) => row[ecgIdx])
-            .filter((value) => value !== null && value !== undefined && !Number.isNaN(value));
+        const ecgSamples = this.inBaseline
+            ? this.baselineBucket
+                .map((row) => row[ecgIdx])
+                .filter((value) => value !== null && value !== undefined && !Number.isNaN(value))
+            : this.signalBufferValues('ecg');
+
         const bpm = estimateHeartRate(ecgSamples);
         this.lastInstantBpm = bpm;
 
         if (bpm !== null) {
             this.lastHrBpm = HR_EMA_ALPHA * bpm + (1 - HR_EMA_ALPHA) * this.lastHrBpm;
         }
+    }
 
-        means[hrIdx] = this.lastHrBpm;
+    buildMeansVector() {
+        const means = new Array(this.signalNames.length).fill(null);
+
+        for (let i = 0; i < this.signalNames.length; i++) {
+            const name = this.signalNames[i];
+            if (name === 'duration') continue;
+            if (DERIVED_SIGNALS.has(name)) continue;
+            means[i] = this.getLiveSignalMean(name);
+        }
+
+        this.updateHeartRate();
+
+        const hrIdx = this.signalNames.indexOf('hr');
+        if (hrIdx >= 0) {
+            means[hrIdx] = this.isSignalDisconnected('ecg') ? null : this.lastHrBpm;
+        }
+
         return means;
     }
 
@@ -428,43 +481,32 @@ export class PhysioProcessor {
             console.log(`[canal ${this.channel}] Signaux détectés: ${discovered.join(', ')}`);
         }
 
-        this.syncSignalsWithPacket(signals, receivedAt);
-
-        const anchor = this.signalNames[1];
-        const packetSize = signals[anchor]?.length ?? 0;
-
-        for (let i = 0; i < packetSize; i++) {
-            const dataPoint = [signals[anchor][i][0]];
-            for (let j = 1; j < this.signalNames.length; j++) {
-                const key = this.signalNames[j];
-                if (DERIVED_SIGNALS.has(key)) continue;
-                dataPoint.push(signals[key]?.[i]?.[1] ?? null);
-            }
-            dataPoint.push(receivedAt);
-            this.addDataPoint(dataPoint);
-        }
-    }
-
-    addDataPoint(dataPoint) {
         if (!this.baselineStartedAt) {
-            this.baselineStartedAt = Date.now();
+            this.baselineStartedAt = receivedAt;
             this.inBaseline = true;
             this.onBaselineChange?.(true);
             this.startBaselineClock();
         }
 
+        this.handlePacketSignals(signals, receivedAt);
+
+        const anchor = this.signalNames[1];
+        const packetSize = signals[anchor]?.length ?? 0;
+
         if (this.inBaseline) {
-            this.baselineBucket.push(dataPoint);
-            if (Date.now() - this.baselineStartedAt >= PHYSIO_BASELINE_MS) {
+            for (let i = 0; i < packetSize; i++) {
+                this.baselineBucket.push(this.buildBaselineRow(signals, i, receivedAt));
+            }
+
+            if (receivedAt - this.baselineStartedAt >= PHYSIO_BASELINE_MS) {
                 this.finishBaseline();
             }
+
             this.maybeEmitLiveMetrics();
             return;
         }
 
-        this.bucket.push(dataPoint);
-        this.trimBucket();
-        this.purgeStaleSignalsFromBucket();
+        this.trimAllSignalBuffers();
 
         const now = Date.now();
         if (now - this.lastMorphEmit < PHYSIO_MORPH_INTERVAL_MS) return;
@@ -480,39 +522,24 @@ export class PhysioProcessor {
         this.lastMetricsEmit = now;
 
         if (!this.inBaseline) {
-            this.trimBucket();
-            this.purgeStaleSignalsFromBucket();
+            this.trimAllSignalBuffers();
         }
 
-        const bucket = this.inBaseline ? this.baselineBucket : this.bucket;
-        const edaIdx = this.signalNames.indexOf('eda');
-        const rspIdx = this.signalNames.indexOf('rsp');
+        this.updateHeartRate();
 
-        let edaMean = null;
-        let rspMean = null;
-        let hrSmooth = this.isSignalStale('ecg') ? null : this.lastHrBpm;
-        let hrInstant = this.isSignalStale('ecg') ? null : this.lastInstantBpm;
+        const edaMean = this.getLiveSignalMean('eda');
+        const rspMean = this.getLiveSignalMean('rsp');
+        const hrSmooth = this.isSignalDisconnected('ecg') ? null : this.lastHrBpm;
+        const hrInstant = this.isSignalDisconnected('ecg') ? null : this.lastInstantBpm;
 
-        if (bucket.length > 0) {
-            const means = this.computeEnrichedMeans(bucket);
-            edaMean = edaIdx >= 0 && !this.isSignalStale('eda') ? means[edaIdx] : null;
-            rspMean = rspIdx >= 0 && !this.isSignalStale('rsp') ? means[rspIdx] : null;
-            if (!this.isSignalStale('ecg')) {
-                hrSmooth = this.lastHrBpm;
-                hrInstant = this.lastInstantBpm;
-            }
-        }
-
-        const metrics = {
+        this.onLiveMetrics?.({
             hrSmooth,
             hrInstant,
             edaMean,
             rspMean,
             morph: null,
             inBaseline: this.inBaseline
-        };
-
-        this.onLiveMetrics?.(metrics);
+        });
 
         if (this.inBaseline) {
             const instantLabel = hrInstant !== null ? hrInstant.toFixed(0) : '—';
@@ -573,59 +600,41 @@ export class PhysioProcessor {
         const baselineCount = this.baselineBucket.length;
         this.baselineReady = true;
         this.inBaseline = false;
-        this.bucket = [];
         this.baselineBucket = [];
+        this.signalBuffers = {};
+        this.latestPacketMean = {};
         this.onBaselineChange?.(false);
         console.log(`[canal ${this.channel}] Baseline terminée (${baselineCount} points)`);
-    }
-
-    trimBucket(bucket = this.bucket) {
-        if (bucket.length === 0) return;
-
-        const cutoff = Date.now() - PHYSIO_WINDOW_MS;
-        for (let i = bucket.length - 1; i >= 0; i--) {
-            if (bucket[i][bucket[i].length - 1] < cutoff) {
-                bucket.splice(i, 1);
-            }
-        }
-
-        const maxPts = maxBucketPoints(PHYSIO_WINDOW_MS, PHYSIO_SAMPLING_RATE);
-        const overflow = bucket.length - maxPts;
-        if (overflow > 0) {
-            bucket.splice(0, overflow);
-        }
-    }
-
-    isScaledSignalStale(signalName) {
-        if (!signalName || signalName === 'duration') return false;
-        if (signalName === 'hr') return this.isSignalStale('ecg');
-        return this.isSignalStale(signalName);
     }
 
     computeMorphParams() {
         if (!this.baselineReady) return null;
 
-        this.purgeStaleSignalsFromBucket();
+        this.trimAllSignalBuffers();
 
-        if (this.bucket.length === 0) {
+        const means = this.buildMeansVector();
+        const hasAnySignal = this.rawSignalNames().some((name) => means[this.signalNames.indexOf(name)] !== null);
+
+        if (!hasAnySignal) {
             const morph = { ...PHYSIO_PARAM_DEFAULTS };
-            this.onLiveMetrics?.({
-                hrSmooth: null,
-                hrInstant: null,
-                edaMean: null,
-                rspMean: null,
-                morph,
-                inBaseline: false
-            });
+            this.emitLiveMorphMetrics(means, morph);
             return morph;
         }
 
-        const means = this.computeEnrichedMeans(this.bucket);
         const scaled = means.map((value, i) => {
-            if (i === 0) return value;
-
             const signalName = this.signalNames[i];
-            if (this.isScaledSignalStale(signalName) || value === null || value === undefined) {
+            if (signalName === 'duration') return 0;
+
+            if (DERIVED_SIGNALS.has(signalName)) {
+                if (value === null || value === undefined) return NEUTRAL_SCALED;
+                const std = this.baselineStds[i];
+                if (!std || std === 0) return NEUTRAL_SCALED;
+                let z = (value - this.baselineMeans[i]) / std;
+                z = Math.max(PHYSIO_Z_CLIP_MIN, Math.min(PHYSIO_Z_CLIP_MAX, z));
+                return Math.round(scale(z, -PHYSIO_SCALING_VALUE, PHYSIO_SCALING_VALUE, 0, 1023));
+            }
+
+            if (this.isSignalDisconnected(signalName) || value === null || value === undefined) {
                 return NEUTRAL_SCALED;
             }
 
@@ -636,16 +645,25 @@ export class PhysioProcessor {
             return Math.round(scale(z, -PHYSIO_SCALING_VALUE, PHYSIO_SCALING_VALUE, 0, 1023));
         });
 
-        const morph = buildMorphParams(scaled, this.signalNames, (name) => this.isSignalStale(name));
+        const morph = buildMorphParams(
+            scaled,
+            this.signalNames,
+            (name) => this.isSignalDisconnected(name)
+        );
+
+        this.emitLiveMorphMetrics(means, morph);
+        return morph;
+    }
+
+    emitLiveMorphMetrics(means, morph) {
         const edaIdx = this.signalNames.indexOf('eda');
         const rspIdx = this.signalNames.indexOf('rsp');
-        const edaMean = edaIdx >= 0 && !this.isSignalStale('eda') ? means[edaIdx] : null;
-        const rspMean = rspIdx >= 0 && !this.isSignalStale('rsp') ? means[rspIdx] : null;
+        const edaMean = edaIdx >= 0 ? this.getLiveSignalMean('eda') : null;
+        const rspMean = rspIdx >= 0 ? this.getLiveSignalMean('rsp') : null;
+        const hrSmooth = this.isSignalDisconnected('ecg') ? null : this.lastHrBpm;
+        const hrInstant = this.isSignalDisconnected('ecg') ? null : this.lastInstantBpm;
 
         this.lastMetricsEmit = Date.now();
-        const hrSmooth = this.isSignalStale('ecg') ? null : this.lastHrBpm;
-        const hrInstant = this.isSignalStale('ecg') ? null : this.lastInstantBpm;
-
         this.onLiveMetrics?.({
             hrSmooth,
             hrInstant,
@@ -663,7 +681,5 @@ export class PhysioProcessor {
             ` | RSP μ=${rspMean !== null ? rspMean.toFixed(0) : '—'}` +
             ` | sphere=${morph.sphere.toFixed(1)} tess=${morph.tess.toFixed(1)} torsion=${morph.torsion.toFixed(1)}`
         );
-
-        return morph;
     }
 }

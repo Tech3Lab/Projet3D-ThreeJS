@@ -222,7 +222,9 @@ class Viewer3D {
         const rsp = rspMean !== null ? rspMean.toFixed(0) : '—';
         const morphPart = inBaseline
             ? 'calibration 20 s'
-            : `sphere ${morph.sphere.toFixed(1)} · tess ${morph.tess.toFixed(1)} · torsion ${morph.torsion.toFixed(1)}`;
+            : morph
+                ? `sphere ${morph.sphere.toFixed(1)} · tess ${morph.tess.toFixed(1)} · torsion ${morph.torsion.toFixed(1)}`
+                : 'morph …';
 
         this.liveMetrics.textContent = `HR ${hr} · EDA ${eda} · RSP ${rsp} · ${morphPart}`;
     }
