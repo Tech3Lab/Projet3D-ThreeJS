@@ -1,63 +1,44 @@
-// ── Paramètres physio → effets 3D (modifier ici) ─────────────────────────
+// ── Réglages physio → forme 3D (modifier ici) ────────────────────────────
 //
-// Chaîne de calcul (après calibration 20 s) :
-//   1. Moyenne live du signal (fenêtre PHYSIO_WINDOW_MS)
-//   2. z-score vs baseline : (valeur − μ) / σ
-//   3. Clip du z entre PHYSIO_Z_CLIP_MIN et PHYSIO_Z_CLIP_MAX
-//   4. Map du z vers 0…1023 (512 = neutre) via PHYSIO_SCALING_VALUE
-//   5. Map 0…1023 vers la plage de l'effet via PHYSIO_PARAM_RANGES
+// Après calibration : on compare chaque signal à sa baseline, puis on pilote la 3D.
+// Plus le signal s'écarte de la baseline, plus l'effet bouge.
 //
-// Effets 3D disponibles (voir script.js / GUI « Effet ») :
-//   sphere   — morph 0 : arrondit le cube vers une sphère (influence morphTarget 0)
-//   torsion  — morph 1 : vrille les sommets autour de l'axe X/Y/Z (morphTarget 1)
-//   tess     — nombre de subdivisions de la géométrie (plus haut = mesh plus fin)
-//   width    — largeur du box (redimensionne, pas un morph)
-//   height   — hauteur du box
-//   depth    — profondeur du box
+// EFFETS (GUI « Effet ») :
+//   sphere   arrondit le cube
+//   torsion  vrille la forme
+//   tess     détail du maillage (plus haut = plus fin)
+//   width / height / depth   taille du cube
 //
-// Réglages courants :
-//   • Plus d'effet visuel  → baisser PHYSIO_SCALING_VALUE (ex. 8 → 4)
-//   • Moins d'effet        → augmenter PHYSIO_SCALING_VALUE (ex. 8 → 12)
-//   • Changer quel signal pilote quoi → PHYSIO_COUPLINGS ('eda', 'ecg', 'rsp', 'hr', ou null)
-//   • Changer les bornes min/max d'un effet → PHYSIO_PARAM_RANGES
-//   • Valeur quand capteur absent → PHYSIO_PARAM_DEFAULTS
+// 3 blocs à toucher en priorité :
+//   PHYSIO_COUPLINGS      quel signal pilote quel effet ('eda', 'rsp', 'hr', null)
+//   PHYSIO_PARAM_RANGES   min / max de chaque effet
+//   PHYSIO_SCALING_VALUE  sensibilité globale (↓ = effet plus fort, ↑ = plus doux)
 //
 export const PROCESS_PHYSIO_LOCALLY = true;
 
-// Fenêtre glissante pour les moyennes live (ms)
-export const PHYSIO_WINDOW_MS = 5000;
-// Fréquence d'échantillonnage supposée pour la détection HR (Hz)
-export const PHYSIO_SAMPLING_RATE = 100;
-// Durée de la phase calibration / baseline (ms)
-export const PHYSIO_BASELINE_MS = 20000;
-// |z| = cette valeur → map vers 0 ou 1023 ; plus petit = réaction plus forte
-export const PHYSIO_SCALING_VALUE = 8;
-// Bornes du z-score avant mapping (évite les pics extrêmes)
-export const PHYSIO_Z_CLIP_MIN = -2;
-export const PHYSIO_Z_CLIP_MAX = 2;
-// Fréquence de mise à jour morph + barre métriques (ms)
-export const PHYSIO_MORPH_INTERVAL_MS = 1000;
-// Signal considéré périmé s'il n'arrive plus depuis (ms)
-export const PHYSIO_STALE_MS = 2000;
-// true : un paquet entièrement à 0 = capteur débranché
-export const PHYSIO_ZERO_MEANS_DISCONNECTED = true;
+export const PHYSIO_WINDOW_MS = 5000;        // historique utilisé pour la moyenne live (ms)
+export const PHYSIO_SAMPLING_RATE = 100;     // Hz supposé pour calculer la HR depuis l'ECG
+export const PHYSIO_BASELINE_MS = 20000;     // durée calibration au démarrage (ms)
+export const PHYSIO_SCALING_VALUE = 8;       // sensibilité signal → forme (↓ plus fort)
+export const PHYSIO_Z_CLIP_MIN = -2;         // limite basse avant mapping (anti-pics)
+export const PHYSIO_Z_CLIP_MAX = 2;          // limite haute avant mapping
+export const PHYSIO_MORPH_INTERVAL_MS = 1000; // refresh forme + barre du bas (ms)
+export const PHYSIO_STALE_MS = 2000;         // sans données depuis X ms = capteur mort
+export const PHYSIO_ZERO_MEANS_DISCONNECTED = true; // paquet [0,0,…] = débranché
 
-const NEUTRAL_SCALED = 512; // 512 sur l'échelle 0…1023 = signal au niveau baseline
+const NEUTRAL_SCALED = 512; // milieu de gamme = signal à la baseline
 
-// ── HR dérivée de l'ECG (démo visuelle, pas analyse clinique) ────────────
+// HR calculée depuis l'ECG (démo, pas médical)
 export const USE_SIMPLE_HR = true;
 export const HR_MIN_PEAK_DISTANCE_SEC = 0.35;
 export const HR_BPM_MIN = 40;
 export const HR_BPM_MAX = 180;
-export const HR_EMA_ALPHA = 0.3;
+export const HR_EMA_ALPHA = 0.3;             // lissage HR affichée (0=figé, 1=brut)
 export const HR_FALLBACK_BPM = 70;
 export const HR_BASELINE_STD_MIN = 5;
 export const HR_BASELINE_CHUNK_SEC = 5;
 
-// Quel signal physiologique pilote chaque effet.
-// null = effet fixé à PHYSIO_PARAM_DEFAULTS (pas de couplage live).
-// Signaux possibles : noms du flux WebSocket en minuscules ('eda', 'ecg', 'rsp'…)
-// 'hr' est dérivé de 'ecg' si USE_SIMPLE_HR est actif.
+// signal → effet. null = pas de lien live, valeur fixe (DEFAULTS)
 export const PHYSIO_COUPLINGS = {
     sphere: 'eda',
     torsion: null,
@@ -67,7 +48,7 @@ export const PHYSIO_COUPLINGS = {
     tess: 'hr'
 };
 
-// Valeurs par défaut quand le signal est absent, déconnecté, ou non couplé (null).
+// effet au repos ou si capteur absent
 export const PHYSIO_PARAM_DEFAULTS = {
     sphere: 0,
     torsion: 0,
@@ -77,7 +58,7 @@ export const PHYSIO_PARAM_DEFAULTS = {
     tess: 20
 };
 
-// [min, max] de chaque effet : 0→min, 512→milieu, 1023→max sur l'échelle normalisée.
+// bornes min / max de chaque effet
 export const PHYSIO_PARAM_RANGES = {
     sphere: [-100, 200],
     torsion: [-100, 100],
@@ -202,7 +183,6 @@ export function estimateHeartRate(ecgSamples, samplingRate = PHYSIO_SAMPLING_RAT
     return bpm;
 }
 
-// Convertit les valeurs 0…1023 (une par signal) en paramètres morph via COUPLINGS + RANGES.
 function buildMorphParams(scaledMeans, signalNames, isSignalStale = null) {
     const result = {};
     for (const [param, signalName] of Object.entries(PHYSIO_COUPLINGS)) {
@@ -657,7 +637,6 @@ export class PhysioProcessor {
         console.log(`[canal ${this.channel}] Baseline terminée (${baselineCount} points)`);
     }
 
-    // Signal live → z-score (baseline) → 0…1023 → effets sphere/torsion/tess/…
     computeMorphParams() {
         if (!this.baselineReady) return null;
 

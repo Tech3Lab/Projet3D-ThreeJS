@@ -223,7 +223,7 @@ class Viewer3D {
         const morphPart = inBaseline
             ? `calibration ${baselineSecondsLeft ?? '…'} s`
             : morph
-                ? `sphere ${morph.sphere.toFixed(1)} · tess ${morph.tess.toFixed(1)} · torsion ${morph.torsion.toFixed(1)}`
+                ? `sphere ${morph.sphere.toFixed(1)} · tess ${morph.tess.toFixed(1)} · width ${morph.width.toFixed(2)}`
                 : 'morph …';
 
         this.liveMetrics.textContent = `HR ${hr} · EDA ${eda} · RSP ${rsp} · ${morphPart}`;
