@@ -16,7 +16,7 @@ const NEUTRAL_SCALED = 512;
 
 // Dérivation ECG → HR (démo visuelle, pas analyse scientifique)
 export const USE_SIMPLE_HR = true;
-export const HR_MIN_PEAK_DISTANCE_SEC = 0.35;e
+export const HR_MIN_PEAK_DISTANCE_SEC = 0.35;
 export const HR_BPM_MIN = 40;
 export const HR_BPM_MAX = 180;
 export const HR_EMA_ALPHA = 0.3;
@@ -211,6 +211,7 @@ export class PhysioProcessor {
         this.lastInstantBpm = null;
         this.lastSignalAt = {};
         this.latestPacketMean = {};
+        this.signalConnected = {};
         this.liveTick = setInterval(() => this.pruneAndEmitLive(), PHYSIO_MORPH_INTERVAL_MS);
     }
 
@@ -239,6 +240,7 @@ export class PhysioProcessor {
         this.signalBuffers[name] = [];
         this.latestPacketMean[name] = null;
         delete this.lastSignalAt[name];
+        this.signalConnected[name] = false;
     }
 
     appendSignalSamples(name, samples, receivedAt) {
@@ -303,8 +305,9 @@ export class PhysioProcessor {
                 || (PHYSIO_ZERO_MEANS_DISCONNECTED && values.every((value) => value === 0));
 
             if (disconnected) {
+                const wasConnected = this.signalConnected[name] !== false;
                 this.clearSignalBuffer(name);
-                if (name === 'eda' || name === 'rsp') {
+                if (wasConnected && (name === 'eda' || name === 'rsp')) {
                     console.log(
                         `[canal ${this.channel}] ${name.toUpperCase()} déconnecté` +
                         ` (paquet: [${values.slice(0, 5).join(', ')}${values.length > 5 ? ', …' : ''}])`
@@ -313,6 +316,7 @@ export class PhysioProcessor {
                 continue;
             }
 
+            this.signalConnected[name] = true;
             this.latestPacketMean[name] = arrayMean(values);
             this.lastSignalAt[name] = receivedAt;
 
