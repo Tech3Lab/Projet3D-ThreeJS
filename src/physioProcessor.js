@@ -60,8 +60,8 @@ export const HR_BASELINE_CHUNK_SEC = 5;
 // 'hr' est dérivé de 'ecg' si USE_SIMPLE_HR est actif.
 export const PHYSIO_COUPLINGS = {
     sphere: 'eda',
-    torsion: 'rsp',
-    width: null,
+    torsion: null,
+    width: 'rsp',
     height: null,
     depth: null,
     tess: 'hr'
