@@ -55,28 +55,31 @@
 			}
 			.live-metrics {
 				position: absolute;
-				bottom: 8px;
-				left: 8px;
-				padding: 6px 10px;
-				font: 12px/1.5 monospace;
+				bottom: 0;
+				left: 0;
+				right: 0;
+				box-sizing: border-box;
+				padding: 8px 12px;
+				font: 13px/1.4 monospace;
 				color: #fff;
-				background: rgba(0, 0, 0, 0.65);
-				border-radius: 4px;
+				background: rgba(0, 0, 0, 0.82);
+				border-top: 1px solid rgba(255, 255, 255, 0.15);
 				pointer-events: none;
-				z-index: 10;
-				white-space: pre;
+				z-index: 100;
 			}
 		</style>
-		<script type="module" crossorigin src="./assets/index-178d6a26.js"></script>
+		<script type="module" crossorigin src="./assets/index-b9d2345c.js"></script>
 	</head>
 	<body>
 		<div id="app">
 			<div id="panel-left" class="viewer-panel">
 				<div id="viewer-75" class="viewer-canvas"></div>
+				<div id="metrics-75" class="live-metrics">Canal 75 — en attente de données…</div>
 			</div>
 			<div id="resizer"></div>
 			<div id="panel-right" class="viewer-panel">
 				<div id="viewer-76" class="viewer-canvas"></div>
+				<div id="metrics-76" class="live-metrics">Canal 76 — en attente de données…</div>
 			</div>
 		</div>
 		

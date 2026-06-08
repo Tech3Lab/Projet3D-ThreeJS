@@ -171,6 +171,7 @@ export class PhysioProcessor {
         this.inBaseline = false;
         this.baselineStartedAt = null;
         this.lastMorphEmit = 0;
+        this.lastMetricsEmit = 0;
         this.lastHrBpm = HR_FALLBACK_BPM;
         this.lastInstantBpm = null;
     }
@@ -280,6 +281,7 @@ export class PhysioProcessor {
             if (Date.now() - this.baselineStartedAt >= PHYSIO_BASELINE_MS) {
                 this.finishBaseline();
             }
+            this.maybeEmitLiveMetrics();
             return;
         }
 
@@ -292,6 +294,37 @@ export class PhysioProcessor {
 
         const morph = this.computeMorphParams();
         if (morph) this.onMorphUpdate(morph);
+    }
+
+    maybeEmitLiveMetrics() {
+        const now = Date.now();
+        if (now - this.lastMetricsEmit < PHYSIO_MORPH_INTERVAL_MS) return;
+        this.lastMetricsEmit = now;
+
+        const bucket = this.inBaseline ? this.baselineBucket : this.bucket;
+        if (bucket.length === 0) return;
+
+        const edaIdx = this.signalNames.indexOf('eda');
+        const means = this.computeEnrichedMeans(bucket);
+        const edaMean = edaIdx >= 0 ? means[edaIdx] : null;
+
+        const metrics = {
+            hrSmooth: this.lastHrBpm,
+            hrInstant: this.lastInstantBpm,
+            edaMean,
+            morph: null,
+            inBaseline: this.inBaseline
+        };
+
+        this.onLiveMetrics?.(metrics);
+
+        if (this.inBaseline) {
+            const instantLabel = this.lastInstantBpm !== null ? this.lastInstantBpm.toFixed(0) : '—';
+            console.log(
+                `[canal ${this.channel}] HR live: ${this.lastHrBpm.toFixed(0)} BPM (instant ${instantLabel})` +
+                ` | EDA μ=${edaMean !== null ? edaMean.toFixed(0) : '—'} | calibration…`
+            );
+        }
     }
 
     finishBaseline() {
@@ -364,19 +397,21 @@ export class PhysioProcessor {
 
         const morph = buildMorphParams(scaled, this.signalNames);
         const edaIdx = this.signalNames.indexOf('eda');
-        const metrics = {
+        const edaMean = edaIdx >= 0 ? means[edaIdx] : null;
+
+        this.lastMetricsEmit = Date.now();
+        this.onLiveMetrics?.({
             hrSmooth: this.lastHrBpm,
             hrInstant: this.lastInstantBpm,
-            edaMean: edaIdx >= 0 ? means[edaIdx] : null,
-            morph
-        };
-
-        this.onLiveMetrics?.(metrics);
+            edaMean,
+            morph,
+            inBaseline: false
+        });
 
         const instantLabel = this.lastInstantBpm !== null ? this.lastInstantBpm.toFixed(0) : '—';
         console.log(
             `[canal ${this.channel}] HR live: ${this.lastHrBpm.toFixed(0)} BPM (instant ${instantLabel})` +
-            ` | EDA μ=${edaIdx >= 0 ? means[edaIdx].toFixed(0) : '—'}` +
+            ` | EDA μ=${edaMean !== null ? edaMean.toFixed(0) : '—'}` +
             ` | sphere=${morph.sphere.toFixed(1)} tess=${morph.tess.toFixed(1)}`
         );
 

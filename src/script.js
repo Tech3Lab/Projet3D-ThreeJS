@@ -45,8 +45,9 @@ function applyMorphTargets(geometry, influences) {
 }
 
 class Viewer3D {
-    constructor(container, listenChannel, guiTitle, guiAlignLeft) {
+    constructor(container, listenChannel, guiTitle, guiAlignLeft, metricsElement) {
         this.container = container;
+        this.liveMetrics = metricsElement;
         this.listenChannel = listenChannel;
         this.mat = {};
         this.shape = {};
@@ -78,7 +79,6 @@ class Viewer3D {
         this.init();
         if (PROCESS_PHYSIO_LOCALLY) {
             this.setupBaselineIndicator();
-            this.setupLiveMetricsOverlay();
             this.physioProcessor = new PhysioProcessor(this.listenChannel, {
                 onMorphUpdate: (morph) => this.applyMorphUpdate(morph),
                 onBaselineChange: (active) => this.setBaselineVisible(active),
@@ -210,26 +210,19 @@ class Viewer3D {
         if (this.baselineIndicator) {
             this.baselineIndicator.classList.toggle('visible', visible);
         }
-        if (visible && this.liveMetrics) {
-            this.liveMetrics.textContent = 'Calibration… (20 s)';
-        }
     }
 
-    setupLiveMetricsOverlay() {
-        this.liveMetrics = document.createElement('div');
-        this.liveMetrics.className = 'live-metrics';
-        this.liveMetrics.textContent = 'HR: —';
-        this.container.parentElement.appendChild(this.liveMetrics);
-    }
-
-    updateLiveMetrics({ hrSmooth, hrInstant, edaMean, morph }) {
+    updateLiveMetrics({ hrSmooth, hrInstant, edaMean, morph, inBaseline }) {
         if (!this.liveMetrics) return;
 
-        const instant = hrInstant !== null ? `\ninstant: ${hrInstant.toFixed(0)} BPM` : '';
+        const instant = hrInstant !== null ? ` (${hrInstant.toFixed(0)} instant)` : '';
+        const eda = edaMean !== null ? edaMean.toFixed(0) : '—';
+        const morphPart = inBaseline
+            ? 'calibration 20 s'
+            : `sphere ${morph.sphere.toFixed(1)} · tess ${morph.tess.toFixed(1)}`;
+
         this.liveMetrics.textContent =
-            `HR: ${hrSmooth.toFixed(0)} BPM${instant}\n` +
-            `EDA μ: ${edaMean !== null ? edaMean.toFixed(0) : '—'}\n` +
-            `sphere: ${morph.sphere.toFixed(1)}  tess: ${morph.tess.toFixed(1)}`;
+            `HR ${hrSmooth.toFixed(0)} BPM${instant} · EDA ${eda} · ${morphPart}`;
     }
 
     isPhysioMessage(json) {
@@ -568,8 +561,8 @@ class Viewer3D {
 }
 
 const viewers = [
-    new Viewer3D(document.getElementById('viewer-75'), '75', 'Canal 75', true),
-    new Viewer3D(document.getElementById('viewer-76'), '76', 'Canal 76', false)
+    new Viewer3D(document.getElementById('viewer-75'), '75', 'Canal 75', true, document.getElementById('metrics-75')),
+    new Viewer3D(document.getElementById('viewer-76'), '76', 'Canal 76', false, document.getElementById('metrics-76'))
 ];
 
 function applyPanelLayout(panelLeft, panelRight, leftWidth, availableWidth) {
