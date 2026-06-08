@@ -157,10 +157,11 @@ function buildMorphParams(scaledMeans, signalNames) {
 // ── Processeur ───────────────────────────────────────────────────────────
 
 export class PhysioProcessor {
-    constructor(channel, { onMorphUpdate, onBaselineChange }) {
+    constructor(channel, { onMorphUpdate, onBaselineChange, onLiveMetrics }) {
         this.channel = channel;
         this.onMorphUpdate = onMorphUpdate;
         this.onBaselineChange = onBaselineChange;
+        this.onLiveMetrics = onLiveMetrics;
         this.signalNames = ['duration'];
         this.bucket = [];
         this.baselineBucket = [];
@@ -171,6 +172,7 @@ export class PhysioProcessor {
         this.baselineStartedAt = null;
         this.lastMorphEmit = 0;
         this.lastHrBpm = HR_FALLBACK_BPM;
+        this.lastInstantBpm = null;
     }
 
     ensureHrSignal() {
@@ -210,6 +212,7 @@ export class PhysioProcessor {
         const hrIdx = this.signalNames.indexOf('hr');
         const ecgSamples = rows.map((row) => row[ecgIdx]);
         const bpm = estimateHeartRate(ecgSamples);
+        this.lastInstantBpm = bpm;
 
         if (bpm !== null) {
             this.lastHrBpm = HR_EMA_ALPHA * bpm + (1 - HR_EMA_ALPHA) * this.lastHrBpm;
@@ -359,6 +362,24 @@ export class PhysioProcessor {
             return Math.round(scale(z, -PHYSIO_SCALING_VALUE, PHYSIO_SCALING_VALUE, 0, 1023));
         });
 
-        return buildMorphParams(scaled, this.signalNames);
+        const morph = buildMorphParams(scaled, this.signalNames);
+        const edaIdx = this.signalNames.indexOf('eda');
+        const metrics = {
+            hrSmooth: this.lastHrBpm,
+            hrInstant: this.lastInstantBpm,
+            edaMean: edaIdx >= 0 ? means[edaIdx] : null,
+            morph
+        };
+
+        this.onLiveMetrics?.(metrics);
+
+        const instantLabel = this.lastInstantBpm !== null ? this.lastInstantBpm.toFixed(0) : '—';
+        console.log(
+            `[canal ${this.channel}] HR live: ${this.lastHrBpm.toFixed(0)} BPM (instant ${instantLabel})` +
+            ` | EDA μ=${edaIdx >= 0 ? means[edaIdx].toFixed(0) : '—'}` +
+            ` | sphere=${morph.sphere.toFixed(1)} tess=${morph.tess.toFixed(1)}`
+        );
+
+        return morph;
     }
 }

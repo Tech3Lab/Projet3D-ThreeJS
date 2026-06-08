@@ -78,9 +78,11 @@ class Viewer3D {
         this.init();
         if (PROCESS_PHYSIO_LOCALLY) {
             this.setupBaselineIndicator();
+            this.setupLiveMetricsOverlay();
             this.physioProcessor = new PhysioProcessor(this.listenChannel, {
                 onMorphUpdate: (morph) => this.applyMorphUpdate(morph),
-                onBaselineChange: (active) => this.setBaselineVisible(active)
+                onBaselineChange: (active) => this.setBaselineVisible(active),
+                onLiveMetrics: (metrics) => this.updateLiveMetrics(metrics)
             });
         }
         this.setupGui(guiTitle, guiAlignLeft);
@@ -172,7 +174,9 @@ class Viewer3D {
         };
 
         socket.onmessage = (event) => {
-            console.log(`[canal ${channel}] Data received: ${event.data}`);
+            if (!PROCESS_PHYSIO_LOCALLY) {
+                console.log(`[canal ${channel}] Data received: ${event.data}`);
+            }
             this.handleMessage(event.data);
         };
 
@@ -206,6 +210,26 @@ class Viewer3D {
         if (this.baselineIndicator) {
             this.baselineIndicator.classList.toggle('visible', visible);
         }
+        if (visible && this.liveMetrics) {
+            this.liveMetrics.textContent = 'Calibration… (20 s)';
+        }
+    }
+
+    setupLiveMetricsOverlay() {
+        this.liveMetrics = document.createElement('div');
+        this.liveMetrics.className = 'live-metrics';
+        this.liveMetrics.textContent = 'HR: —';
+        this.container.parentElement.appendChild(this.liveMetrics);
+    }
+
+    updateLiveMetrics({ hrSmooth, hrInstant, edaMean, morph }) {
+        if (!this.liveMetrics) return;
+
+        const instant = hrInstant !== null ? `\ninstant: ${hrInstant.toFixed(0)} BPM` : '';
+        this.liveMetrics.textContent =
+            `HR: ${hrSmooth.toFixed(0)} BPM${instant}\n` +
+            `EDA μ: ${edaMean !== null ? edaMean.toFixed(0) : '—'}\n` +
+            `sphere: ${morph.sphere.toFixed(1)}  tess: ${morph.tess.toFixed(1)}`;
     }
 
     isPhysioMessage(json) {
