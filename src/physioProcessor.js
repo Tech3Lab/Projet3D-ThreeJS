@@ -1,5 +1,5 @@
 // ── Mode & paramètres physio (modifier ici) ──────────────────────────────
-export const PROCESS_PHYSIO_LOCALLY = false;
+export const PROCESS_PHYSIO_LOCALLY = true;
 
 export const PHYSIO_WINDOW_MS = 20000;
 export const PHYSIO_SAMPLING_RATE = 100;
