@@ -12,9 +12,14 @@
 			}
 			.viewer-panel {
 				flex: 1 1 50%;
-				min-width: 200px;
+				min-width: 0;
 				position: relative;
 				overflow: hidden;
+			}
+			.viewer-panel.collapsed {
+				flex: 0 0 0 !important;
+				overflow: hidden;
+				pointer-events: none;
 			}
 			.viewer-canvas {
 				width: 100%;
@@ -31,8 +36,25 @@
 			#resizer.active {
 				background: #5a9fd4;
 			}
+			.baseline-indicator {
+				display: none;
+				position: absolute;
+				top: 8px;
+				left: 50%;
+				transform: translateX(-50%);
+				padding: 4px 10px;
+				font: 12px/1.4 sans-serif;
+				color: #fff;
+				background: rgba(0, 0, 0, 0.55);
+				border-radius: 4px;
+				pointer-events: none;
+				z-index: 10;
+			}
+			.baseline-indicator.visible {
+				display: block;
+			}
 		</style>
-		<script type="module" crossorigin src="./assets/index-85e48606.js"></script>
+		<script type="module" crossorigin src="./assets/index-be1be5ef.js"></script>
 	</head>
 	<body>
 		<div id="app">

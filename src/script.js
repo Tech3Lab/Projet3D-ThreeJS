@@ -3,6 +3,7 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { GUI } from 'three/addons/libs/lil-gui.module.min.js';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { STLExporter } from 'three/examples/jsm/exporters/STLExporter.js';
+import { PROCESS_PHYSIO_LOCALLY, PhysioProcessor } from './physioProcessor.js';
 
 const WS_BASE = 'wss://t3l-collector-backend.herokuapp.com/?listen=';
 // const WS_BASE = 'ws://localhost:4000/?listen=';
@@ -72,7 +73,16 @@ class Viewer3D {
             z: false
         };
 
+        this.hasMorphGeometry = false;
+
         this.init();
+        if (PROCESS_PHYSIO_LOCALLY) {
+            this.setupBaselineIndicator();
+            this.physioProcessor = new PhysioProcessor(this.listenChannel, {
+                onMorphUpdate: (morph) => this.applyMorphUpdate(morph),
+                onBaselineChange: (active) => this.setBaselineVisible(active)
+            });
+        }
         this.setupGui(guiTitle, guiAlignLeft);
         this.connectWebSocket();
         this.setupDragDrop();
@@ -163,7 +173,7 @@ class Viewer3D {
 
         socket.onmessage = (event) => {
             console.log(`[canal ${channel}] Data received: ${event.data}`);
-            this.update(event.data);
+            this.handleMessage(event.data);
         };
 
         socket.onclose = (event) => {
@@ -183,6 +193,60 @@ class Viewer3D {
         };
 
         this.socket = socket;
+    }
+
+    setupBaselineIndicator() {
+        this.baselineIndicator = document.createElement('div');
+        this.baselineIndicator.className = 'baseline-indicator';
+        this.baselineIndicator.textContent = 'Calibration…';
+        this.container.parentElement.appendChild(this.baselineIndicator);
+    }
+
+    setBaselineVisible(visible) {
+        if (this.baselineIndicator) {
+            this.baselineIndicator.classList.toggle('visible', visible);
+        }
+    }
+
+    isPhysioMessage(json) {
+        return Array.isArray(json.data);
+    }
+
+    isMorphMessage(json) {
+        return (
+            json.sphere !== undefined ||
+            json.torsion !== undefined ||
+            json.width !== undefined ||
+            json.height !== undefined ||
+            json.depth !== undefined ||
+            json.tess !== undefined ||
+            json.shape !== undefined ||
+            json.newShading !== undefined
+        );
+    }
+
+    handleMessage(data) {
+        let json;
+        try {
+            json = JSON.parse(data);
+        } catch {
+            console.warn(`[canal ${this.listenChannel}] Message JSON invalide`);
+            return;
+        }
+
+        if (PROCESS_PHYSIO_LOCALLY) {
+            if (this.isPhysioMessage(json)) {
+                this.physioProcessor.ingest(json);
+            }
+            return;
+        }
+
+        if (this.isPhysioMessage(json)) return;
+        if (!this.isMorphMessage(json)) {
+            console.warn(`[canal ${this.listenChannel}] Message ignoré (format inconnu)`);
+            return;
+        }
+        this.applyMorphUpdate(json);
     }
 
     setupGui(title, alignLeft) {
@@ -416,6 +480,38 @@ class Viewer3D {
         this.mesh.rotation.x = this.radianX;
         this.mesh.rotation.y = this.radianY;
         this.mesh.rotation.z = this.radianZ;
+        this.hasMorphGeometry = Boolean(this.mesh.geometry.morphAttributes?.position?.length);
+    }
+
+    needsGeometryRebuild(json) {
+        const structuralKeys = ['shape', 'tess', 'width', 'height', 'depth', 'newShading', 'x', 'y', 'z'];
+        return structuralKeys.some((key) => json[key] !== undefined);
+    }
+
+    applyMorphUpdate(json) {
+        const needsRebuild = this.needsGeometryRebuild(json) || !this.hasMorphGeometry;
+
+        if (json.newShading) this.effectController.newShading = json.newShading;
+        if (json.tess !== undefined) this.effectController.tess = json.tess;
+        if (json.sphere !== undefined) this.effectController.sphere = json.sphere;
+        if (json.torsion !== undefined) this.effectController.torsion = json.torsion;
+        if (json.width !== undefined) this.effectController.width = json.width;
+        if (json.depth !== undefined) this.effectController.depth = json.depth;
+        if (json.height !== undefined) this.effectController.height = json.height;
+        if (json.shape) this.effectController.shape = json.shape;
+        if (typeof json.x !== 'undefined') this.effectController.x = json.x;
+        if (typeof json.y !== 'undefined') this.effectController.y = json.y;
+        if (typeof json.z !== 'undefined') this.effectController.z = json.z;
+
+        if (needsRebuild) {
+            this.render();
+            return;
+        }
+
+        if (this.mesh?.morphTargetInfluences) {
+            this.mesh.morphTargetInfluences[0] = this.effectController.sphere;
+            this.mesh.morphTargetInfluences[1] = this.effectController.torsion;
+        }
     }
 
     exportSTL() {
@@ -438,24 +534,6 @@ class Viewer3D {
         }, undefined, (error) => {
             console.error(error);
         });
-    }
-
-    update(data) {
-        const json = JSON.parse(data);
-
-        if (json.newShading) this.effectController.newShading = json.newShading;
-        if (json.tess) this.effectController.tess = json.tess;
-        if (json.sphere) this.effectController.sphere = json.sphere;
-        if (json.torsion) this.effectController.torsion = json.torsion;
-        if (json.width) this.effectController.width = json.width;
-        if (json.depth) this.effectController.depth = json.depth;
-        if (json.height) this.effectController.height = json.height;
-        if (json.shape) this.effectController.shape = json.shape;
-        if (typeof json.x !== 'undefined') this.effectController.x = json.x;
-        if (typeof json.y !== 'undefined') this.effectController.y = json.y;
-        if (typeof json.z !== 'undefined') this.effectController.z = json.z;
-
-        this.render();
     }
 
     setPanelVisible(visible) {
