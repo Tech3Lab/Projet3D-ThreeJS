@@ -154,6 +154,9 @@ function buildMorphParams(scaledMeans, signalNames) {
     return result;
 }
 
+// Signaux calculés localement — absents des paquets WebSocket
+const DERIVED_SIGNALS = new Set(['hr']);
+
 // ── Processeur ───────────────────────────────────────────────────────────
 
 export class PhysioProcessor {
@@ -170,10 +173,28 @@ export class PhysioProcessor {
         this.baselineReady = false;
         this.inBaseline = false;
         this.baselineStartedAt = null;
+        this.baselineClock = null;
         this.lastMorphEmit = 0;
         this.lastMetricsEmit = 0;
         this.lastHrBpm = HR_FALLBACK_BPM;
         this.lastInstantBpm = null;
+    }
+
+    startBaselineClock() {
+        this.clearBaselineClock();
+        this.baselineClock = setTimeout(() => {
+            if (this.inBaseline) {
+                console.log(`[canal ${this.channel}] Baseline durée atteinte (${PHYSIO_BASELINE_MS} ms)`);
+                this.finishBaseline();
+            }
+        }, PHYSIO_BASELINE_MS);
+    }
+
+    clearBaselineClock() {
+        if (this.baselineClock) {
+            clearTimeout(this.baselineClock);
+            this.baselineClock = null;
+        }
     }
 
     ensureHrSignal() {
@@ -263,7 +284,8 @@ export class PhysioProcessor {
             const dataPoint = [signals[anchor][i][0]];
             for (let j = 1; j < this.signalNames.length; j++) {
                 const key = this.signalNames[j];
-                dataPoint.push(signals[key][i][1]);
+                if (DERIVED_SIGNALS.has(key)) continue;
+                dataPoint.push(signals[key]?.[i]?.[1] ?? 0);
             }
             this.addDataPoint(dataPoint);
         }
@@ -274,6 +296,7 @@ export class PhysioProcessor {
             this.baselineStartedAt = Date.now();
             this.inBaseline = true;
             this.onBaselineChange?.(true);
+            this.startBaselineClock();
         }
 
         if (this.inBaseline) {
@@ -332,6 +355,9 @@ export class PhysioProcessor {
     }
 
     finishBaseline() {
+        if (!this.inBaseline) return;
+        this.clearBaselineClock();
+
         if (this.baselineBucket.length === 0) {
             console.warn(`[canal ${this.channel}] Baseline vide, nouvel essai au prochain paquet`);
             this.baselineStartedAt = null;
