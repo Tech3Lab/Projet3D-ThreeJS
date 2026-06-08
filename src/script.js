@@ -212,7 +212,7 @@ class Viewer3D {
         }
     }
 
-    updateLiveMetrics({ hrSmooth, hrInstant, edaMean, rspMean, morph, inBaseline }) {
+    updateLiveMetrics({ hrSmooth, hrInstant, edaMean, rspMean, morph, inBaseline, baselineSecondsLeft }) {
         if (!this.liveMetrics) return;
 
         const hr = hrSmooth !== null
@@ -221,7 +221,7 @@ class Viewer3D {
         const eda = edaMean !== null ? edaMean.toFixed(0) : '—';
         const rsp = rspMean !== null ? rspMean.toFixed(0) : '—';
         const morphPart = inBaseline
-            ? 'calibration 20 s'
+            ? `calibration ${baselineSecondsLeft ?? '…'} s`
             : morph
                 ? `sphere ${morph.sphere.toFixed(1)} · tess ${morph.tess.toFixed(1)} · torsion ${morph.torsion.toFixed(1)}`
                 : 'morph …';
